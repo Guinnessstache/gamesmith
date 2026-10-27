@@ -2,15 +2,28 @@
 
 Build browser games by describing them. Gamesmith is a desktop app (Electron) that pairs a live game preview and code editor with an AI agent running on your own model server, such as a Mac Studio on your network.
 
-**Version 0.1 (this build)**
+**Version 0.2 (this build)**
 - New games from a 2D (Phaser 3) or 3D (Three.js) starter template. Engines are bundled, so games run offline and deploy as plain static files.
 - Live preview with hot reload, a console panel, and "Open in browser".
 - An AI agent that reads and edits files, runs the game, reads the console errors, and fixes them on its own (up to 3 rounds by default).
 - Works with any OpenAI-compatible server: Ollama, LM Studio, llama.cpp, MLX, vLLM.
 - Version history with one-click Undo for every AI change (built-in git, no install needed).
 - Monaco code editor (the same editor as VS Code), file tree, and asset import.
+- **Publish:** connect GitHub, create a repo and upload in one click, then publish to GitHub Pages and/or Render. Every later "Save to GitHub" updates the live game automatically.
 
-**Next:** GitHub sign-in and push, one-click deploy to Render or GitHub Pages, then Blender asset generation.
+**Next:** Blender asset generation (glTF models straight into `assets/`).
+
+## Publishing
+
+Click **Publish** in a game's top bar.
+
+1. **Connect GitHub.** Paste a token with the `repo` scope ([create one](https://github.com/settings/tokens/new?scopes=repo&description=Gamesmith)). The token is stored encrypted with Windows' own credential protection. For a "Sign in with GitHub" button instead, create a GitHub OAuth App with **Enable Device Flow** ticked and put its Client ID in Settings.
+2. **Create and upload.** Gamesmith creates the repository and pushes the game. No git install is needed. If the repo is edited on github.com, those changes are merged in on the next save.
+3. **Put it on the web.**
+   - *GitHub Pages:* free, needs a public repository on a free GitHub plan.
+   - *Render:* paste a [Render API key](https://dashboard.render.com/u/settings#api-keys). Render must already be connected to your GitHub account with access to the repo (Render dashboard, then Account settings).
+
+Then use **Save to GitHub** in the top bar whenever you want the live version updated. The number badge shows how many versions haven't been uploaded yet.
 
 ## Run it (Windows)
 
@@ -88,6 +101,8 @@ src/main/          Electron main process (Node)
   previewServer.js Static server, hot reload, console capture
   projects.js      Project creation and sandboxed file access
   git.js           Version history (isomorphic-git)
+  github.js        GitHub sign-in, repo creation, push and merge
+  deploy.js        GitHub Pages and Render publishing
 src/preload/       Safe bridge between the UI and main process
 src/renderer/      React UI
 resources/templates/  Starter games
@@ -100,7 +115,15 @@ scripts/           Vendor copy and tests
 npm run test:agent
 ```
 
-This runs the agent loop against a scripted mock model. For the full UI test on Linux with Xvfb:
+This runs the agent loop against a scripted mock model.
+
+```
+npm run test:github
+```
+
+This pushes to a real local git server (needs git on PATH) with mock GitHub and Render APIs, including merging an edit made on "github.com".
+
+For the full UI test on Linux with Xvfb, which clicks through building with AI and the whole Publish flow:
 
 ```
 npm run build

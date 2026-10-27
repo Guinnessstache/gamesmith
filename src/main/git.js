@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import { join, dirname } from 'node:path'
 import git from 'isomorphic-git'
 
-const author = { name: 'Gamesmith', email: 'gamesmith@localhost' }
+export const AUTHOR = { name: 'Gamesmith', email: 'gamesmith@localhost' }
 
 export async function init(dir) {
   await git.init({ fs, dir, defaultBranch: 'main' })
@@ -19,7 +19,26 @@ export async function ensureRepo(dir) {
 }
 
 /** Stage everything (adds, edits, deletes) and commit. Returns the oid or null if nothing changed. */
-export async function commitAll(dir, message) {
+export async function commitAll(dir, message, author = AUTHOR) {
+  // isomorphic-git decides a file is unchanged when its size and whole-second
+  // timestamps match the index ("racy git"). A same-size edit made within ~1s
+  // of the last commit would be missed, so re-hash any recently touched file.
+  let indexTime = 0
+  try {
+    indexTime = fs.statSync(join(dir, '.git', 'index')).mtimeMs
+  } catch {
+    /* no index yet */
+  }
+  if (indexTime) {
+    for (const [filepath, , workdir] of await git.statusMatrix({ fs, dir })) {
+      if (workdir === 0) continue
+      try {
+        if (fs.statSync(join(dir, filepath)).mtimeMs >= indexTime - 2000) await git.add({ fs, dir, filepath })
+      } catch {
+        /* vanished */
+      }
+    }
+  }
   const matrix = await git.statusMatrix({ fs, dir })
   let changed = 0
   for (const [filepath, head, workdir, stage] of matrix) {
@@ -38,7 +57,7 @@ export async function commitAll(dir, message) {
     hasHead = false
   }
   if (!changed && hasHead) return null
-  return git.commit({ fs, dir, message, author })
+  return git.commit({ fs, dir, message, author: author || AUTHOR })
 }
 
 export async function log(dir, depth = 100) {

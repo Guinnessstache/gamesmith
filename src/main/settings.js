@@ -25,7 +25,9 @@ const DEFAULTS = {
     autoFixRounds: 3,
     requestTimeoutSec: 600
   },
-  projectsDir: ''
+  projectsDir: '',
+  // Client ID of a GitHub OAuth App with Device Flow enabled. Public value, not a secret.
+  github: { clientId: '' }
 }
 
 let cache = null

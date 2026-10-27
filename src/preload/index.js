@@ -49,6 +49,27 @@ contextBridge.exposeInMainWorld('gs', {
     importFiles: (folder) => call('fs:import', folder),
     onChanged: (fn) => on('files:changed', fn)
   },
+  github: {
+    account: () => call('github:account'),
+    signInToken: (t) => call('github:signInToken', t),
+    signOut: () => call('github:signOut'),
+    deviceStart: () => call('github:deviceStart'),
+    deviceCancel: () => call('github:deviceCancel'),
+    onAuth: (fn) => on('github:auth', fn)
+  },
+  publish: {
+    status: () => call('publish:status'),
+    createRepo: (o) => call('publish:createRepo', o),
+    linkRepo: (ref) => call('publish:linkRepo', ref),
+    sync: (msg) => call('publish:sync', msg),
+    enablePages: () => call('publish:enablePages'),
+    createRender: (ownerId) => call('publish:createRender', ownerId)
+  },
+  render: {
+    setKey: (k) => call('render:setKey', k),
+    workspaces: () => call('render:workspaces')
+  },
+  openUrl: (url) => call('open:url', url),
   git: {
     log: () => call('git:log'),
     snapshot: (msg) => call('git:snapshot', msg),

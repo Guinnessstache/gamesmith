@@ -4,6 +4,7 @@ import HistoryPanel from './HistoryPanel.jsx'
 import CodeEditor from './CodeEditor.jsx'
 import Preview from './Preview.jsx'
 import Chat from './Chat.jsx'
+import PublishPanel from './PublishPanel.jsx'
 import { AiBadge, TemplateGlyph, isTextFile, isImage } from './ui.jsx'
 
 export default function Workspace({ project, settings, onClose, onOpenSettings }) {
@@ -12,6 +13,33 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
   const [active, setActive] = useState('game')
   const [leftPanel, setLeftPanel] = useState('files')
   const [historyTick, setHistoryTick] = useState(0)
+  const [showPublish, setShowPublish] = useState(false)
+  const [pub, setPub] = useState(null) // publish status for the top bar
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState('')
+
+  const refreshPub = useCallback(() => {
+    window.gs.publish.status().then(setPub).catch(() => setPub(null))
+  }, [])
+  useEffect(() => {
+    refreshPub()
+  }, [refreshPub, historyTick])
+
+  const quickSave = async () => {
+    setSaving(true)
+    setSaveMsg('')
+    try {
+      await window.gs.publish.sync()
+      setSaveMsg('Saved to GitHub')
+      setHistoryTick((n) => n + 1)
+    } catch (e) {
+      setSaveMsg(e.message)
+    } finally {
+      setSaving(false)
+      setTimeout(() => setSaveMsg(''), 6000)
+    }
+  }
+  const liveUrl = pub?.pages?.url || pub?.render?.url
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
 
@@ -87,7 +115,18 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
           <span className="muted small">{project.meta.engine}</span>
         </div>
         <div className="spacer" />
+        {saveMsg && <span className={`save-msg ${saveMsg === 'Saved to GitHub' ? 'ok' : 'bad'}`}>{saveMsg}</span>}
         <button className="btn ghost" onClick={() => window.gs.projects.reveal()}>Show folder</button>
+        {liveUrl && (
+          <button className="btn ghost" onClick={() => window.gs.openUrl(liveUrl)} title={liveUrl}>View live game</button>
+        )}
+        {pub?.repo ? (
+          <button className="btn ghost" onClick={quickSave} disabled={saving} title={`Upload to ${pub.repo.fullName}`}>
+            {saving ? 'Saving…' : 'Save to GitHub'}
+            {pub.unpushed > 0 && !saving && <span className="count warn">{pub.unpushed}</span>}
+          </button>
+        ) : null}
+        <button className="btn play" onClick={() => setShowPublish(true)}>Publish</button>
         <AiBadge settings={settings} onClick={onOpenSettings} />
       </header>
 
@@ -163,6 +202,17 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
           />
         </aside>
       </div>
+      {showPublish && (
+        <PublishPanel
+          project={project}
+          settings={settings}
+          onClose={() => {
+            setShowPublish(false)
+            refreshPub()
+          }}
+          onChanged={() => setHistoryTick((n) => n + 1)}
+        />
+      )}
     </div>
   )
 }

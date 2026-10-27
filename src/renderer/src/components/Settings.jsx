@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 function buildUrl(preset, host, port, presets) {
   const p = presets[preset]
@@ -9,6 +9,11 @@ function buildUrl(preset, host, port, presets) {
 export default function Settings({ settings, presets, onClose, onSaved }) {
   const [ai, setAi] = useState({ ...settings.ai })
   const [projectsDir, setProjectsDir] = useState(settings.projectsDir)
+  const [clientId, setClientId] = useState(settings.github?.clientId || '')
+  const [account, setAccount] = useState(undefined)
+  useEffect(() => {
+    window.gs.github.account().then(setAccount)
+  }, [])
   const [models, setModels] = useState(settings.ai.model ? [settings.ai.model] : [])
   const [test, setTest] = useState({ state: 'idle', msg: '' })
 
@@ -40,7 +45,7 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
   }
 
   const save = async () => {
-    await window.gs.settings.set({ ai, projectsDir })
+    await window.gs.settings.set({ ai, projectsDir, github: { clientId: clientId.trim() } })
     onSaved()
   }
 
@@ -129,6 +134,32 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
             <input type="password" value={ai.apiKey} onChange={(e) => update({ apiKey: e.target.value })} />
           </label>
         </details>
+
+        <h3>GitHub</h3>
+        <div className="field-row">
+          <span className="grow-text">
+            {account === undefined ? '…' : account ? <>Signed in as <strong>{account.login}</strong></> : <span className="muted">Not signed in. Connect from a game's Publish panel.</span>}
+          </span>
+          {account && (
+            <button className="btn ghost small" onClick={async () => { await window.gs.github.signOut(); setAccount(null) }}>Sign out</button>
+          )}
+        </div>
+        <details className="advanced">
+          <summary>GitHub sign-in button (optional)</summary>
+          <p className="muted small">
+            To show a "Sign in with GitHub" button instead of pasting a token, create a GitHub OAuth App (Settings, Developer settings, OAuth Apps), tick "Enable Device Flow", and paste its Client ID here.
+          </p>
+          <label className="field">
+            <span>OAuth App Client ID</span>
+            <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Iv1.…" />
+          </label>
+        </details>
+
+        <h3>Render</h3>
+        <div className="field-row">
+          <span className="grow-text muted">Connect Render from a game's Publish panel. To remove the saved key:</span>
+          <button className="btn ghost small" onClick={() => window.gs.render.setKey('')}>Forget Render key</button>
+        </div>
 
         <h3>Projects</h3>
         <div className="field-row">

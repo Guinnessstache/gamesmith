@@ -94,6 +94,12 @@ export function readMeta(dir) {
   return JSON.parse(readFileSync(join(dir, '.gamesmith', 'project.json'), 'utf8'))
 }
 
+export function updateMeta(dir, patch) {
+  const meta = { ...readMeta(dir), ...patch }
+  writeFileSync(join(dir, '.gamesmith', 'project.json'), JSON.stringify(meta, null, 2))
+  return meta
+}
+
 /** Recursively list project files as [{ path, size }] using forward slashes. */
 export function walk(projectDir, { skipLib = false } = {}) {
   const out = []

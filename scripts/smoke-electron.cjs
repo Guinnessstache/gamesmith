@@ -79,6 +79,9 @@ const check = (cond, msg) => {
 
 mock.listen(0, '127.0.0.1', async () => {
   const port = mock.address().port
+  const services = await require('./mock-services.cjs').startMockServices(path.join(tmp, 'remote'))
+  process.env.GAMESMITH_GITHUB_API = `http://127.0.0.1:${services.port}/api`
+  process.env.GAMESMITH_RENDER_API = `http://127.0.0.1:${services.port}/render`
   const projectsDir = path.join(tmp, 'projects')
   fs.mkdirSync(path.join(tmp, 'userData'), { recursive: true })
   fs.writeFileSync(
@@ -176,6 +179,63 @@ mock.listen(0, '127.0.0.1', async () => {
     const msg = await js(`document.querySelector('.test-msg')?.textContent || ''`)
     check(/Connected\. 1 model/.test(msg), `settings connection test: "${msg}"`)
     await shot('10-settings')
+    await js(`[...document.querySelectorAll('.modal .btn.ghost')].find(b => b.textContent === 'Cancel').click()`)
+
+    // ---- Publish flow ----
+    const setInput = (sel, value) => js(`(() => {
+      const el = document.querySelector(${JSON.stringify(sel)});
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`)
+    const clickText = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(${JSON.stringify(text)}))?.click()`)
+
+    await clickText('Publish')
+    await waitFor('.publish')
+    await shot('11-publish-connect')
+    await setInput('.publish input[type=password]', 'ghp_testtoken')
+    await clickText('Connect')
+    check(await waitFor('.publish .pub-row, .publish input:not([type])', 10000), 'GitHub token accepted')
+    await shot('12-publish-create-repo')
+    await clickText('Create and upload')
+    check(await waitFor('.repo-link', 30000), 'repo created and first upload done')
+    const bare = path.join(tmp, 'remote', 'Space-Goats.git')
+    const remoteFiles = require('node:child_process').execFileSync('git', ['--git-dir', bare, 'ls-tree', '-r', '--name-only', 'main']).toString()
+    check(remoteFiles.includes('src/scenes/GameScene.js') && remoteFiles.includes('lib/phaser/phaser.min.js'), 'game files are on the (mock) GitHub repo')
+
+    await clickText('Publish on GitHub Pages')
+    check(await waitFor('.site a', 15000), 'GitHub Pages site link shown')
+    await shot('13-publish-pages-updating')
+
+    await setInput('.host input[type=password]', 'rnd_testkey')
+    await js(`[...document.querySelectorAll('.host button')].find(b => b.textContent === 'Connect').click()`)
+    await sleep(800)
+    await clickText('Publish on Render')
+    const renderShown = await (async () => {
+      for (let i = 0; i < 50; i++) {
+        if ((await js(`document.querySelectorAll('.site a').length`)) >= 2) return true
+        await sleep(200)
+      }
+      return false
+    })()
+    check(renderShown, 'Render site link shown')
+    check(services.state.render?.serviceDetails?.publishPath === './', 'Render static site created with publishPath ./')
+    await sleep(6000) // let the Pages status poll flip to Live
+    await shot('14-publish-live')
+    const liveCount = await js(`[...document.querySelectorAll('.site-state')].filter(e => e.textContent === 'Live').length`)
+    check(liveCount === 2, `both hosts show Live (${liveCount})`)
+
+    // Quick save from the top bar after an edit
+    await js(`[...document.querySelectorAll('.publish-head .btn')][0].click()`)
+    fs.appendFileSync(path.join(projectsDir, 'space-goats', 'GAME_DESIGN.md'), '\n- Added from the smoke test\n')
+    await sleep(1500)
+    await clickText('Save to GitHub')
+    check(await waitFor('.save-msg.ok', 20000), 'top-bar Save to GitHub works')
+    const remoteDoc = require('node:child_process').execFileSync('git', ['--git-dir', bare, 'show', 'main:GAME_DESIGN.md']).toString()
+    check(remoteDoc.includes('Added from the smoke test'), 'edit reached GitHub')
+    const remoteAuthor = require('node:child_process').execFileSync('git', ['--git-dir', bare, 'log', '-1', '--format=%an', 'main']).toString().trim()
+    check(remoteAuthor === 'Jason Thistle', `manual save is authored by the GitHub account (${remoteAuthor})`)
+    await shot('15-workspace-published')
   } catch (e) {
     console.error('SMOKE ERROR', e)
     failures++

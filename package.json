@@ -1,6 +1,6 @@
 {
   "name": "gamesmith",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Build web games with local AI, save to GitHub, deploy to the web",
   "main": "out/main/index.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder --win",
-    "test:agent": "node scripts/test-agent.mjs"
+    "test:agent": "node scripts/test-agent.mjs",
+    "test:github": "node scripts/test-github.mjs"
   },
   "author": "Jason Thistle",
   "license": "MIT",

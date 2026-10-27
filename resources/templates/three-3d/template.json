@@ -1,0 +1,1 @@
+{ "id": "three-3d", "name": "3D Game", "engine": "Three.js", "description": "3D worlds, first/third-person, racing and physics toys. Loads glTF models.", "vendor": ["three"] }

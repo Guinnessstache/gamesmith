@@ -1,0 +1,1 @@
+{ "id": "phaser-2d", "name": "2D Game", "engine": "Phaser 3", "description": "Platformers, top-down, arcade and puzzle games. Arcade physics built in.", "vendor": ["phaser"] }

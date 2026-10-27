@@ -1,0 +1,4 @@
+node_modules/
+.gamesmith/
+.DS_Store
+Thumbs.db

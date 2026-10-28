@@ -122,9 +122,14 @@ mock.listen(0, '127.0.0.1', async () => {
   while (!(win = BrowserWindow.getAllWindows()[0])) await sleep(100)
   await new Promise((r) => win.webContents.once('did-finish-load', r))
   win.setSize(1440, 900)
+  win.webContents.setBackgroundThrottling(false)
+  win.show()
+  win.focus()
   const js = (code) => win.webContents.executeJavaScript(code)
   const shot = async (name, wait = 600) => {
     await sleep(wait)
+    win.webContents.invalidate() // make sure the capture is a fresh frame (software WebGL can lag)
+    await sleep(300)
     const img = await win.webContents.capturePage()
     fs.writeFileSync(path.join(outDir, `${name}.png`), img.toPNG())
     console.log('shot', name)
@@ -155,7 +160,7 @@ mock.listen(0, '127.0.0.1', async () => {
     await js(`window.gs.projects.create({ name: 'Space Goats', templateId: 'phaser-2d' })`)
     await js(`window.gs.projects.create({ name: 'Marble Run', templateId: 'three-3d' })`)
     await js(`window.gs.projects.importHtml(${JSON.stringify(path.join(__dirname, 'fixtures', 'one-file-game.html'))})`)
-    for (const [name, file] of [['Crystal cluster', 'crystal.py'], ['Pine tree', 'pine.py'], ['Iron lantern', 'lantern.py']]) {
+    for (const [name, file] of [['Knight', 'knight.py'], ['Crystal cluster', 'crystal.py'], ['Pine tree', 'pine.py'], ['Iron lantern', 'lantern.py']]) {
       const id = await js(`window.gs.library.create(${JSON.stringify(name)}, '')`)
       await js(`window.gs.library.saveScript(${JSON.stringify(id)}, ${JSON.stringify(showcase(file))})`)
       const r = await js(`window.gs.library.build(${JSON.stringify(id)})`)
@@ -218,8 +223,22 @@ mock.listen(0, '127.0.0.1', async () => {
     await waitFor('.asset-stage .monaco-editor', 15000)
     await shot('blender-script', 1500)
 
+    // Animations: the knight walking
+    await js(`[...document.querySelectorAll('.lib-item')].find(b => b.textContent.includes('Knight')).click()`)
+    await sleep(800)
+    await js(`[...document.querySelectorAll('.asset-view .seg button')].find(b => b.textContent === '3D view').click()`)
+    await waitFor('.clip-bar .clip', 15000)
+    await waitFor('.viewer canvas', 15000)
+    await sleep(1500)
+    for (let i = 0; i < 10 && (await js(`document.querySelector('.clip.on')?.textContent`)) !== '▶ Walk'; i++) {
+      await js(`[...document.querySelectorAll('.clip-bar .clip')].find(b => b.textContent === '▶ Walk').click()`)
+      await sleep(400)
+    }
+    await shot('animate', 1180)
+
   } catch (e) {
     console.error('SHOWCASE ERROR', e)
+    await shot('failure', 0).catch(() => {})
     app.exit(1)
     return
   }

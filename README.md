@@ -4,7 +4,7 @@
 
 Build browser games by describing them. Gamesmith is a desktop app (Electron) that pairs a live game preview and code editor with an AI agent running on your own model server, such as a Mac Studio on your network.
 
-**Version 0.5 (this build)**
+**Version 0.6 (this build)**
 - New games from a 2D (Phaser 3) or 3D (Three.js) starter template. Engines are bundled, so games run offline and deploy as plain static files.
 - Live preview with hot reload, a console panel, and "Open in browser".
 - An AI agent that reads and edits files, runs the game, reads the console errors, and fixes them on its own (up to 3 rounds by default).
@@ -28,6 +28,7 @@ Open the **Blender** tab in any game, or **My 3D models** on the home screen.
 
 - **Getting Blender.** Gamesmith uses an installed Blender 4.2 or newer if it finds one (Program Files, Steam, or a path in Settings). If not, **Get Blender** downloads the official portable build from blender.org (about 400 MB), checks it against Blender's published checksum, and keeps it in Gamesmith's own folder. Forks built on Blender 4.2+ (such as Mixar) work too: point Settings at their program.
 - **Making a model.** Click **+ New**, name it, and describe it to the AI on the right. The AI writes a Blender Python script (`model.py`), Gamesmith runs it in Blender, measures the result (size in meters, triangles, materials), renders a preview, and sends any error back to the AI to fix. Every version is saved, and a failed build never replaces the last good model.
+- **Animating it.** Ask for movement ("make the lid open", "give it idle, walk and attack"). The AI adds a skeleton with the `Rig` helper, attaches parts to bones (or lets one mesh bend with them), and keys each named clip. The clips are saved inside `model.glb`; buttons under the 3D view play them, and games play them with Three.js's `AnimationMixer`. The game AI is told every clip's name, length and whether it loops.
 - **Looking at it.** **3D view** spins the model on a 1 m grid; **Render** shows Blender's image; **Script** lets you edit `model.py` yourself (Ctrl+S builds).
 - **Using it.** **Add to <game>** copies `model.glb` into `assets/models/<name>/`. The game AI also searches your library first when it looks for models, and is told each model's real size.
 - **Keeping it.** The library is a folder (Documents\Gamesmith Library by default) with its own history. **Back up to GitHub** creates a private `gamesmith-assets` repository; on another computer, **Get my library from GitHub** downloads it.

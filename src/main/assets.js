@@ -307,6 +307,7 @@ export function addFromLibrary(projectDir, libId) {
     authors: [],
     ownModel: true,
     size_m: meta.stats?.size_m,
+    clips: meta.stats?.clips?.length ? meta.stats.clips : undefined,
     entry,
     files: [entry],
     bytes: glb.length,
@@ -458,7 +459,11 @@ export function usageHint(record, template) {
       if (record.ownModel) {
         const sz = record.size_m ? ` Size: ${record.size_m.width} x ${record.size_m.depth} m, ${record.size_m.height} m tall.` : ''
         return three
-          ? `GLTFLoader from 'three/addons/loaders/GLTFLoader.js': new GLTFLoader().load('${record.entry}', (g) => scene.add(g.scene)). Made in the user's asset library: real-world meters, origin at the bottom center (sits on y = 0).${sz} Metal parts need reflections to look right: set scene.environment (e.g. RoomEnvironment from 'three/addons/environments/RoomEnvironment.js' through a PMREMGenerator) if the game doesn't have one.`
+          ? `GLTFLoader from 'three/addons/loaders/GLTFLoader.js': new GLTFLoader().load('${record.entry}', (g) => scene.add(g.scene)). Made in the user's asset library: real-world meters, origin at the bottom center (sits on y = 0).${sz} Metal parts need reflections to look right: set scene.environment (e.g. RoomEnvironment from 'three/addons/environments/RoomEnvironment.js' through a PMREMGenerator) if the game doesn't have one.${
+              record.clips?.length
+                ? ` Animations in the file: ${record.clips.map((c) => `"${c.name}" (${c.seconds} s, ${c.loop ? 'loops' : 'plays once'})`).join(', ')}. Play one: const mixer = new THREE.AnimationMixer(g.scene); const action = mixer.clipAction(THREE.AnimationClip.findByName(g.animations, '${record.clips[0].name}')); action.play(); then call mixer.update(dt) every frame. For one-shot clips use action.setLoop(THREE.LoopOnce, 1); action.clampWhenFinished = true; switch clips with action.crossFadeTo(other, 0.2). For several copies use SkeletonUtils.clone(g.scene) from 'three/addons/utils/SkeletonUtils.js', each with its own mixer.`
+                : ''
+            }`
           : `3D model (.glb); not usable in a 2D Phaser game.`
       }
       if (record.lowPoly) {

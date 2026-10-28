@@ -136,6 +136,43 @@ const manifest = assets.readManifest(game.dir)
 ok(manifest.assets.some((a) => a.id === 'lib-treasure-chest' && a.source === 'My library'), 'recorded in ASSETS.json as My library')
 ok(/GLTFLoader/.test(assets.usageHint(rec, 'three-3d')) && /0\.82/.test(assets.usageHint(rec, 'three-3d')), 'game AI gets a usage hint with the real size')
 
+// ---- animation: a rigged knight with three clips ----
+{
+  const knight = await library.create('Knight', 'Blocky knight with animations')
+  library.writeScript(knight.id, fs.readFileSync(join(root, 'scripts/showcase/knight.py'), 'utf8'))
+  const kb = await library.build(knight.id, { blenderPath: exe, runner })
+  ok(kb.ok, 'animated knight builds')
+  const names = (kb.stats.clips || []).map((c) => c.name).sort().join(',')
+  ok(names === 'Attack,Idle,Walk' && kb.stats.clips.find((c) => c.name === 'Attack').loop === false, `clips reported with length and looping (${names})`)
+  ok(/Animations: .*Walk \(0\.9 s, loops\)/.test(formatBuild(kb)) && /Attack \(0\.8 s, plays once\)/.test(formatBuild(kb)), 'modeling AI is told which clips exist')
+  ok(kb.stats.min_z === 0, 'knight stands on the ground')
+
+  // Play the clips the way a game would (Three.js AnimationMixer) and check the parts really move.
+  const THREE = await import('three')
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+  const bytes = library.files(knight.id)['model.glb']
+  const gltf = await new Promise((res, rej) => new GLTFLoader().parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '', res, rej))
+  ok(gltf.animations.map((a) => a.name).sort().join(',') === 'Attack,Idle,Walk', 'the .glb carries all three animations')
+  const legTip = () => {
+    gltf.scene.updateMatrixWorld(true)
+    let leg
+    gltf.scene.traverse((o) => o.isMesh && /^Leg\.?L/.test(o.name) && (leg = o))
+    return new THREE.Box3().setFromObject(leg).getCenter(new THREE.Vector3())
+  }
+  const rest = legTip()
+  const mixer = new THREE.AnimationMixer(gltf.scene)
+  mixer.clipAction(THREE.AnimationClip.findByName(gltf.animations, 'Walk')).play()
+  mixer.update(0.01)
+  const stride = legTip()
+  ok(stride.z - rest.z > 0.1, `Walk swings the left leg forward (${(stride.z - rest.z).toFixed(2)} m toward the front)`)
+  mixer.stopAllAction()
+
+  const game = await createProject({ projectsDir: join(tmp, 'games2'), resourcesDir: join(root, 'resources'), name: 'Knight Game', templateId: 'three-3d' })
+  const kr = await assets.addAsset(game.dir, { id: `lib-${knight.id}`, type: 'models' })
+  const hint = assets.usageHint(kr, 'three-3d')
+  ok(/AnimationMixer/.test(hint) && /"Walk"/.test(hint) && /LoopOnce/.test(hint), 'game AI is told the clip names and how to play them')
+}
+
 // ---- downloading portable Blender: blocked server, then a good mirror; checksum enforced ----
 {
   const { execFileSync } = await import('node:child_process')

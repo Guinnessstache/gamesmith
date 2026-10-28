@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ModelViewer from './ModelViewer.jsx'
 import CodeEditor from './CodeEditor.jsx'
 import { BuildBadge } from './ModelChat.jsx'
@@ -33,6 +33,17 @@ export function useModelStudio() {
   useEffect(() => {
     refreshAsset(assetId)
   }, [assetId, refreshAsset])
+  // Builds from anywhere (the AI, the Build button, another window) update the list and the open model.
+  const assetIdRef = useRef(assetId)
+  assetIdRef.current = assetId
+  useEffect(
+    () =>
+      window.gs.library.onChanged(({ id } = {}) => {
+        refreshList()
+        if (id && id === assetIdRef.current) refreshAsset(id)
+      }),
+    [refreshList, refreshAsset]
+  )
 
   const refresh = useCallback(async () => {
     await Promise.all([refreshList(), refreshAsset(assetId)])
@@ -66,7 +77,10 @@ export default function BlenderStudio({ studio, project }) {
                 {a.preview ? <img src={a.preview} alt="" /> : <span className="lib-thumb" aria-hidden>◆</span>}
                 <span className="lib-text">
                   <span className="asset-name">{a.name}</span>
-                  <span className="muted small">{a.hasModel ? `${a.stats?.triangles?.toLocaleString() ?? '?'} tris` : 'not built yet'} · {timeAgo(a.updated)}</span>
+                  <span className="muted small">
+                    {a.hasModel ? `${a.stats?.triangles?.toLocaleString() ?? '?'} tris` : 'not built yet'}
+                    {a.stats?.clips?.length ? `, ${a.stats.clips.length} animation${a.stats.clips.length > 1 ? 's' : ''}` : ''} · {timeAgo(a.updated)}
+                  </span>
                 </span>
               </button>
             ))}
@@ -105,6 +119,15 @@ function AssetView({ asset, view, setView, project, onChanged, blender }) {
   const [lastBuild, setLastBuild] = useState(null)
   const [msg, setMsg] = useState('')
   const [wire, setWire] = useState(false)
+  const clips = meta.stats?.clips || []
+  // Show movement straight away: the first looping clip (an idle or walk) plays by itself.
+  const [clip, setClip] = useState(() => clips.find((c) => c.loop)?.name || null)
+  useEffect(() => {
+    if (clip && !clips.some((c) => c.name === clip)) setClip(clips.find((c) => c.loop)?.name || null)
+    else if (!clip && clips.length) setClip(clips.find((c) => c.loop)?.name || null)
+  }, [clips.map((c) => c.name).join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
+  const current = clips.find((c) => c.name === clip)
+  const [replay, setReplay] = useState(0)
 
   // The AI changes the script too: take its version unless there are unsaved edits here.
   useEffect(() => {
@@ -182,7 +205,24 @@ function AssetView({ asset, view, setView, project, onChanged, blender }) {
           ) : !asset.glb ? (
             <div className="studio-empty muted">Not built yet. Ask the AI on the right to make it, or write the script and click Build.</div>
           ) : view === 'model' ? (
-            <ModelViewer glb={asset.glb} fallback={asset.preview} wireframe={wire} />
+            <>
+              <ModelViewer replay={replay} glb={asset.glb} fallback={asset.preview} wireframe={wire} clip={clip} clipLoops={current?.loop ?? true} />
+              {clips.length > 0 && (
+                <div className="clip-bar" role="group" aria-label="Animations">
+                  <button className={`clip ${!clip ? 'on' : ''}`} onClick={() => setClip(null)}>Rest pose</button>
+                  {clips.map((c) => (
+                    <button
+                      key={c.name}
+                      className={`clip ${clip === c.name ? 'on' : ''}`}
+                      title={`${c.seconds} s, ${c.loop ? 'loops' : 'plays once'}`}
+                      onClick={() => (clip === c.name && !c.loop ? setReplay((n) => n + 1) : setClip(c.name))}
+                    >
+                      ▶ {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <div className="viewer fallback">{asset.preview ? <img src={asset.preview} alt={`${meta.name} rendered in Blender`} /> : <span className="muted">No render yet.</span>}</div>
           )}
@@ -205,6 +245,12 @@ function AssetView({ asset, view, setView, project, onChanged, blender }) {
               <dd>{s.objects}</dd>
               <dt>Materials</dt>
               <dd>{s.materials.join(', ') || 'none'}</dd>
+              {clips.length > 0 && (
+                <>
+                  <dt>Animations</dt>
+                  <dd>{clips.map((c) => `${c.name} (${c.seconds} s${c.loop ? '' : ', once'})`).join(', ')}</dd>
+                </>
+              )}
             </dl>
           ) : (
             <p className="small">Build it to see its size and triangle count.</p>

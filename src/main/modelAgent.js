@@ -37,6 +37,31 @@ barrel = bpy.context.object
 barrel.name = "Barrel"
 assign(shade_smooth(barrel), mat("Wood", (0.45, 0.28, 0.14), roughness=0.8))
 
+ANIMATION (only when the user asks for movement: opening, walking, idle, attacks, spinning...)
+Use the Rig helper. Moving parts must be separate objects. Build the model in its rest pose first, then:
+  rig = Rig()
+  rig.bone("Body", head=(0, 0, 0.9), tail=(0, 0, 1.4))                 # tail defaults to 0.25 m straight up
+  rig.bone("Leg.L", head=(0.12, 0, 0.9), tail=(0.12, 0, 0.1), parent="Body")   # put head at the joint (hip, hinge, shoulder)
+  rig.bone("Leg.R", head=(-0.12, 0, 0.9), tail=(-0.12, 0, 0.1), parent="Body")
+  rig.attach(torso, "Body")         # rigid: the part follows the bone exactly (best for blocky/low-poly parts)
+  rig.attach(left_leg, "Leg.L")
+  # rig.attach(mesh) with no bone makes one continuous mesh bend with every bone (tails, worms, cloth)
+  with rig.clip("Walk", seconds=0.8):                       # loop=True by default: the end returns to the start
+      rig.pose("Leg.L", at=0.0, rotate=(-25, 0, 0))
+      rig.pose("Leg.R", at=0.0, rotate=(25, 0, 0))
+      rig.pose("Leg.L", at=0.4, rotate=(25, 0, 0))
+      rig.pose("Leg.R", at=0.4, rotate=(-25, 0, 0))
+      rig.pose("Body", at=0.2, move=(0, 0, 0.03))
+  with rig.clip("Open", seconds=1.0, loop=False):           # one-shot clips hold their last pose
+      rig.pose("Lid", at=0.6, rotate=(-100, 0, 0))
+Rules:
+- Add every bone before attaching parts or making clips. Each clip starts from the rest pose.
+- rotate is degrees around the WORLD axes at the bone's head: X tips forward/back, Y tilts sideways, Z turns.
+  The model faces -Y, so for a part hanging down from its joint, rotate=(-30, 0, 0) swings it FORWARD and (30, 0, 0) back.
+  A lid hinged at the back opens with a negative X rotation. move is meters along world axes. scale is a number.
+- Times are in seconds; keep loops short (0.6 to 1.2 s for walk cycles). Use clear names games can use: Idle, Walk, Run, Jump, Attack, Die, Open, Close, Spin.
+- After build_model, check the clip list in the result.
+
 Work in small steps: change the script, call build_model, read the numbers (is the size right? is min_z 0?), then improve.
 When done, briefly tell the user what you made in plain words (one or two sentences). Don't paste the script.
 
@@ -102,6 +127,7 @@ export function formatBuild(r) {
     'Build OK.',
     `Size: ${s.size_m.width} m wide (X), ${s.size_m.depth} m deep (Y), ${s.size_m.height} m tall (Z).`,
     `${s.objects} object(s), ${s.triangles} triangles. Materials: ${s.materials.join(', ') || 'none'}.`,
+    s.clips?.length ? `Animations: ${s.clips.map((c) => `${c.name} (${c.seconds} s${c.loop ? ', loops' : ', plays once'})`).join(', ')}.` : 'No animations.',
     ...notes
   ].join('\n')
 }

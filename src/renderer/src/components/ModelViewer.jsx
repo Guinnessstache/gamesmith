@@ -9,11 +9,12 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
  * the size reads at a glance. Falls back to the rendered preview image when the
  * computer can't start WebGL.
  */
-export default function ModelViewer({ glb, fallback, wireframe = false }) {
+export default function ModelViewer({ glb, fallback, wireframe = false, clip = null, clipLoops = true, replay = 0 }) {
   const host = useRef(null)
   const ctx = useRef(null)
   const [noGl, setNoGl] = useState(false)
   const [loadErr, setLoadErr] = useState('')
+  const [loadedTick, setLoadedTick] = useState(0)
 
   // Set up the scene once.
   useEffect(() => {
@@ -63,13 +64,16 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
     resize()
 
     let raf
+    const clock = new THREE.Clock()
     const loop = () => {
+      const dt = Math.min(clock.getDelta(), 0.1)
+      ctx.current?.mixer?.update(dt)
       controls.update()
       renderer.render(scene, camera)
       raf = requestAnimationFrame(loop)
     }
     loop()
-    ctx.current = { scene, camera, controls, model: null }
+    ctx.current = { scene, camera, controls, model: null, mixer: null, clips: [] }
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
@@ -93,6 +97,9 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
         ;[].concat(o.material || []).forEach((m) => m.dispose())
       })
       c.model = null
+      c.mixer?.stopAllAction()
+      c.mixer = null
+      c.clips = []
     }
     setLoadErr('')
     if (!glb) return
@@ -106,6 +113,9 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
         const model = gltf.scene
         ctx.current.scene.add(model)
         ctx.current.model = model
+        ctx.current.clips = gltf.animations
+        ctx.current.mixer = gltf.animations.length ? new THREE.AnimationMixer(model) : null
+        setLoadedTick((n) => n + 1)
         // Frame it, keeping the camera direction.
         const box = new THREE.Box3().setFromObject(model)
         const size = box.getSize(new THREE.Vector3())
@@ -125,6 +135,23 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
       (e) => setLoadErr(e?.message || String(e))
     )
   }, [glb])
+
+  // Play the chosen clip (or show the rest pose).
+  useEffect(() => {
+    const c = ctx.current
+    if (!c?.mixer) return
+    c.mixer.stopAllAction()
+    const found = clip && THREE.AnimationClip.findByName(c.clips, clip)
+    if (!found) return
+    const action = c.mixer.clipAction(found)
+    action.reset()
+    if (clipLoops) action.setLoop(THREE.LoopRepeat, Infinity)
+    else {
+      action.setLoop(THREE.LoopOnce, 1)
+      action.clampWhenFinished = true
+    }
+    action.play()
+  }, [clip, clipLoops, loadedTick, replay])
 
   useEffect(() => {
     ctx.current?.model?.traverse((o) => {

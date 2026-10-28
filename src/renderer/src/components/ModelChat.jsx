@@ -4,9 +4,10 @@ const STARTERS = [
   'A wooden treasure chest with gold trim',
   'A low-poly pine tree, about 4 m tall',
   'A medieval wooden door with iron hinges',
-  'A simple sci-fi crate with glowing edges'
+  'A simple sci-fi crate with glowing edges',
+  'A blocky knight with idle, walk and attack animations'
 ]
-const FOLLOW_UPS = ['Make it bigger', 'Add more detail', 'Use fewer triangles', 'Change the colors', 'Round off the edges']
+const FOLLOW_UPS = ['Animate it', 'Add more detail', 'Make it bigger', 'Use fewer triangles', 'Change the colors']
 
 const TOOL_LABELS = {
   read_script: () => 'Read the script',

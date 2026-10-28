@@ -15,7 +15,7 @@ import math
 import os
 import sys
 import traceback
-from mathutils import Vector
+from mathutils import Euler, Vector
 
 RESULT_TAG = "GAMESMITH_RESULT "
 
@@ -70,7 +70,177 @@ def shade_smooth(obj, angle_deg=40):
     return obj
 
 
-HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth}
+# ---------- animation ----------
+FPS = 24
+
+
+class Rig:
+    """A skeleton for animating a model.
+
+    rig = Rig()
+    rig.bone("Body", head=(0, 0, 0.4), tail=(0, 0, 0.9))
+    rig.bone("Lid", head=(0, 0.25, 0.5), parent="Body")      # tail defaults to 0.25 m straight up
+    rig.attach(lid_obj, "Lid")       # the part follows the bone rigidly
+    rig.attach(body_obj)             # no bone: the mesh bends with all bones (automatic weights)
+    with rig.clip("Open", seconds=1.0, loop=False):
+        rig.pose("Lid", at=0.0, rotate=(0, 0, 0))
+        rig.pose("Lid", at=0.6, rotate=(-110, 0, 0))   # degrees around the world X, Y, Z axes
+    """
+
+    def __init__(self, name="Rig"):
+        self.data = bpy.data.armatures.new(name)
+        self.obj = bpy.data.objects.new(name, self.data)
+        bpy.context.scene.collection.objects.link(self.obj)
+        self._bones = {}
+        self._made = set()
+        self._clip = None
+
+    # --- skeleton ---
+    def bone(self, name, head, tail=None, parent=None):
+        if parent is not None and parent not in self._bones:
+            raise ValueError(f'rig.bone("{name}"): parent bone "{parent}" does not exist yet. Add the parent bone first.')
+        if self._made:
+            raise RuntimeError(f'rig.bone("{name}"): add every bone before attaching parts or making clips.')
+        head = Vector(head)
+        tail = Vector(tail) if tail is not None else head + Vector((0, 0, 0.25))
+        if (tail - head).length < 1e-4:
+            raise ValueError(f'rig.bone("{name}"): head and tail are in the same place.')
+        self._bones[name] = (head, tail, parent)
+        return name
+
+    def _build(self):
+        if self._made or not self._bones:
+            if not self._bones:
+                raise RuntimeError("The rig has no bones. Call rig.bone(...) first.")
+            return
+        bpy.ops.object.mode_set(mode="OBJECT") if bpy.context.object and bpy.context.object.mode != "OBJECT" else None
+        bpy.ops.object.select_all(action="DESELECT")
+        bpy.context.view_layer.objects.active = self.obj
+        self.obj.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        for name, (head, tail, parent) in self._bones.items():
+            eb = self.data.edit_bones.new(name)
+            eb.head, eb.tail = head, tail
+            if parent:
+                eb.parent = self.data.edit_bones[parent]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self._made = set(self._bones)
+        for pb in self.obj.pose.bones:
+            pb.rotation_mode = "QUATERNION"
+
+    def attach(self, obj, bone=None):
+        """Make a part follow a bone (rigid), or with no bone, bend with the whole skeleton."""
+        self._build()
+        if bone is not None:
+            if bone not in self._bones:
+                raise ValueError(f'rig.attach: no bone named "{bone}". Bones: {", ".join(self._bones)}')
+            world = obj.matrix_world.copy()
+            obj.parent = self.obj
+            obj.parent_type = "BONE"
+            obj.parent_bone = bone
+            obj.matrix_world = world
+        else:
+            bpy.ops.object.select_all(action="DESELECT")
+            obj.select_set(True)
+            self.obj.select_set(True)
+            bpy.context.view_layer.objects.active = self.obj
+            bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+        return obj
+
+    # --- clips ---
+    def clip(self, name, seconds=1.0, loop=True):
+        """One named animation (e.g. "Idle", "Walk", "Open"). Use with `with`."""
+        rig = self
+
+        class _Clip:
+            def __enter__(self_):
+                rig._build()
+                if rig._clip is not None:
+                    raise RuntimeError("Clips can't be nested.")
+                if bpy.data.actions.get(name):
+                    raise ValueError(f'There is already a clip named "{name}".')
+                act = bpy.data.actions.new(name)
+                act.use_fake_user = True
+                act["gs_loop"] = bool(loop)
+                act["gs_seconds"] = float(seconds)
+                rig.obj.animation_data_create()
+                rig.obj.animation_data.action = act
+                rig._clip = (act, max(1, round(seconds * FPS)), loop)
+                # Every bone starts at rest, so clips don't leak poses into each other.
+                for pb in rig.obj.pose.bones:
+                    pb.rotation_quaternion = (1, 0, 0, 0)
+                    pb.location = (0, 0, 0)
+                    pb.scale = (1, 1, 1)
+                    for prop in ("rotation_quaternion", "location", "scale"):
+                        pb.keyframe_insert(prop, frame=0)
+                return self_
+
+            def __exit__(self_, exc_type, exc, tb):
+                act, end, looping = rig._clip
+                rig._clip = None
+                if exc_type is None:
+                    for fc in _fcurves(act, rig.obj):
+                        value = fc.evaluate(0) if looping else fc.evaluate(end)
+                        fc.keyframe_points.insert(end, value, options={"REPLACE"})
+                    act.use_frame_range = True
+                    act.frame_start, act.frame_end = 0, end
+                rig.obj.animation_data.action = None
+                for pb in rig.obj.pose.bones:
+                    pb.rotation_quaternion = (1, 0, 0, 0)
+                    pb.location = (0, 0, 0)
+                    pb.scale = (1, 1, 1)
+                return False
+
+        return _Clip()
+
+    def pose(self, bone, at, rotate=None, move=None, scale=None):
+        """Key a bone at a time (seconds) inside a clip.
+        rotate: degrees around the world X, Y, Z axes (X tips forward/back, Y tilts sideways, Z turns).
+        move: meters along the world X, Y, Z axes.  scale: a number, 1 = normal size."""
+        if self._clip is None:
+            raise RuntimeError("rig.pose(...) must be inside `with rig.clip(...):`")
+        if bone not in self._bones:
+            raise ValueError(f'rig.pose: no bone named "{bone}". Bones: {", ".join(self._bones)}')
+        act, end, _ = self._clip
+        frame = round(float(at) * FPS)
+        if frame < 0 or frame > end:
+            raise ValueError(f'rig.pose("{bone}", at={at}): time is outside the clip (0 to {end / FPS:g} seconds).')
+        pb = self.obj.pose.bones[bone]
+        rest = self.data.bones[bone].matrix_local.to_quaternion()
+        if rotate is not None:
+            rx, ry, rz = (math.radians(a) for a in rotate)
+            world = Euler((rx, ry, rz), "XYZ").to_quaternion()
+            pb.rotation_quaternion = rest.inverted() @ world @ rest
+            pb.keyframe_insert("rotation_quaternion", frame=frame)
+        if move is not None:
+            pb.location = rest.inverted() @ Vector(move)
+            pb.keyframe_insert("location", frame=frame)
+        if scale is not None:
+            pb.scale = (scale, scale, scale) if isinstance(scale, (int, float)) else tuple(scale)
+            pb.keyframe_insert("scale", frame=frame)
+
+
+def _fcurves(action, obj):
+    """F-curves of an action (Blender 4.4+ keeps them in layers/strips/channelbags)."""
+    if hasattr(action, "fcurves") and len(getattr(action, "fcurves", [])):
+        return list(action.fcurves)
+    out = []
+    for layer in getattr(action, "layers", []):
+        for strip in layer.strips:
+            for bag in getattr(strip, "channelbags", []):
+                out.extend(bag.fcurves)
+    return out
+
+
+def clips_info():
+    return [
+        {"name": a.name, "seconds": round(float(a.get("gs_seconds", (a.frame_range[1] - a.frame_range[0]) / FPS)), 3), "loop": bool(a.get("gs_loop", True))}
+        for a in bpy.data.actions
+        if a.use_fake_user and "gs_loop" in a
+    ]
+
+
+HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS}
 
 
 # ---------- measuring ----------
@@ -175,6 +345,7 @@ def main():
     result = {"ok": False}
     try:
         bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.context.scene.render.fps = FPS
         with open(script, "r", encoding="utf-8") as f:
             code = f.read()
         ns = dict(HELPERS)
@@ -185,8 +356,13 @@ def main():
             raise RuntimeError("The script ran but created no mesh objects. Add geometry, e.g. bpy.ops.mesh.primitive_cube_add().")
         stats = measure(objs)
 
+        clips = clips_info()
+        if clips:
+            stats["clips"] = clips
+        if bpy.context.object and bpy.context.object.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.select_all(action="DESELECT")
-        for o in objs:
+        for o in objs + [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]:
             o.select_set(True)
         bpy.ops.export_scene.gltf(
             filepath=out_glb,
@@ -194,6 +370,8 @@ def main():
             use_selection=True,
             export_apply=True,  # apply modifiers
             export_yup=True,
+            export_animations=bool(clips),
+            export_animation_mode="ACTIONS",  # every clip becomes one named animation
         )
         if out_png != "-":
             render_preview(out_png, stats["bounds"], px)

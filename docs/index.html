@@ -124,6 +124,7 @@
 
   /* feature rows: copy beside a real screenshot, alternating sides */
   .feature { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 3.5rem; align-items: center; padding-block: 3rem; }
+  .feature.flip { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); }
   .feature.flip .copy { order: 2; }
   .copy { max-width: 30rem; }
   .copy h3 { font-size: clamp(1.6rem, 2.8vw, 2.2rem); font-variation-settings: 'opsz' 48; margin-bottom: 0.9rem; }
@@ -137,6 +138,8 @@
 
   .servers { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.1rem; padding: 0; list-style: none; }
   .servers li { border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.85rem; font-size: 0.95rem; color: var(--text); }
+  .frames { margin: 0; }
+  .frames figcaption { color: var(--muted); font-size: 0.95rem; margin-top: 0.8rem; }
   .diagram { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 2rem; }
   .diagram svg { width: 100%; height: auto; display: block; }
 
@@ -295,7 +298,7 @@
         <div class="copy">
           <div class="role"><i></i>Your models</div>
           <h3>Make your own 3D models</h3>
-          <p>Describe a model and the AI builds it in Blender, the free 3D app, which Gamesmith runs in the background. You never need to learn Blender. Gamesmith can download it for you.</p>
+          <p>Describe a model and the AI builds it in Blender, the free 3D app, which Gamesmith runs in the background. You never need to learn Blender, and Gamesmith can download it for you.</p>
           <ul>
             <li>Spin it around in the 3D view and see its real size and triangle count</li>
             <li>Keep it in your own library and add it to any game</li>
@@ -305,7 +308,20 @@
         <div class="shot"><img src="img/blender.webp" width="1440" height="900" loading="lazy" alt="The Blender tab showing a treasure chest model in a 3D view, with its size and materials, a library of other models, and the AI chat that made it." /></div>
       </div>
 
-      <div class="feature flip" style="--c: var(--live)">
+      <div class="feature flip" style="--c: var(--model)">
+        <div class="copy">
+          <div class="role"><i></i>Your models</div>
+          <h3>Bring them to life</h3>
+          <p>Ask for movement: an idle sway, a walk cycle, a sword swing, a lid that opens. The AI gives the model a skeleton in Blender and keys each move, and you play every animation in the 3D view.</p>
+          <p>Animations travel inside the model file, and when you add it to a game, that game's AI is told each one's name and how to play it.</p>
+        </div>
+        <figure class="frames">
+          <div class="shot"><img src="img/knight-frames.webp" width="1200" height="300" loading="lazy" alt="Six frames of an animated blocky knight made in Gamesmith: three steps of a walk cycle, the sword raised and swung in an attack, and the idle pose." /></div>
+          <figcaption>One model, three animations: Walk, Attack and Idle, played back in Three.js.</figcaption>
+        </figure>
+      </div>
+
+      <div class="feature" style="--c: var(--live)">
         <div class="copy">
           <div class="role"><i></i>Your link</div>
           <h3>Publish in a click</h3>

@@ -379,3 +379,8 @@ a { color: var(--cyan); }
 .ws-body.no-left { grid-template-columns: minmax(0, 1fr) 400px; }
 .left[hidden] { display: none; }
 .studio .asset-detail { width: 260px; }
+.asset-stage { position: relative; }
+.clip-bar { position: absolute; left: 12px; right: 12px; bottom: 12px; flex: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.clip { border: 1px solid var(--line); background: rgba(18, 24, 35, 0.85); color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
+.clip:hover { border-color: var(--violet); }
+.clip.on { background: var(--violet); color: var(--violet-ink); border-color: var(--violet); font-weight: 600; }

@@ -243,6 +243,52 @@ async function download(url, attempts = 3) {
   }
 }
 
+// ---------- textures for Blender models ----------
+// Model scripts can use Poly Haven textures (texture("rock_face"), terrain(...)). They're
+// downloaded once at 1k into the cache and packed into the model's .glb when it's built.
+export const TERRAIN_DEFAULTS = { ground: 'grass_medium_01', rock: 'rock_face', snow: 'snow_02', sand: 'coast_sand_01' }
+const TEXTURE_ID = /^[a-z0-9][a-z0-9_-]{1,80}$/
+
+/** Poly Haven texture ids a model script uses. */
+export function texturesInScript(script) {
+  const ids = new Set()
+  const code = String(script).replace(/#.*$/gm, '') // ignore comments
+  for (const m of code.matchAll(/\btexture\(\s*["']([\w-]+)["']/g)) ids.add(m[1])
+  for (const m of code.matchAll(/\bterrain\(([^)]*)\)/gs)) {
+    for (const [key, def] of Object.entries(TERRAIN_DEFAULTS)) {
+      const k = new RegExp(`\\b${key}\\s*=\\s*(?:["']([\\w-]+)["']|None)`).exec(m[1])
+      if (!k) ids.add(def)
+      else if (k[1]) ids.add(k[1])
+    }
+  }
+  return [...ids].filter((id) => TEXTURE_ID.test(id))
+}
+
+export const texturesDir = () => cacheDir && join(cacheDir, 'textures')
+
+/** Download (once) the color, normal and roughness maps of each texture. Returns the ids that failed. */
+export async function ensureTextures(ids, res = '1k') {
+  const missing = []
+  for (const id of ids) {
+    const dir = join(texturesDir(), id)
+    if (fs.existsSync(join(dir, 'ok'))) continue
+    try {
+      const p = await plan(id, 'textures', res)
+      fs.mkdirSync(dir, { recursive: true })
+      await Promise.all(
+        Object.entries(p.maps).map(async ([role, path]) => {
+          const f = p.files.find((x) => x.path === path)
+          fs.writeFileSync(join(dir, `${role}${path.slice(path.lastIndexOf('.'))}`), await download(f.url))
+        })
+      )
+      fs.writeFileSync(join(dir, 'ok'), new Date().toISOString())
+    } catch (e) {
+      missing.push({ id, error: e.message })
+    }
+  }
+  return missing
+}
+
 // ---------- manifest ----------
 export function readManifest(projectDir) {
   try {

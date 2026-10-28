@@ -75,9 +75,31 @@ def photo(name, path, roughness=0.8):
 
 
 def assign(obj, material):
-    """Give an object a material (replacing any it had)."""
+    """Give an object a material (replacing any it had). Textured materials also get UVs."""
     obj.data.materials.clear()
     obj.data.materials.append(material)
+    if material is not None and material.get("gs_tile"):
+        box_uv(obj, material["gs_tile"])
+    return obj
+
+
+def box_uv(obj, tile=2.0):
+    """UVs in meters: each face is mapped from the side it faces most, one image copy per `tile` meters."""
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv = bm.loops.layers.uv.verify()
+    mw = obj.matrix_world
+    rot = mw.to_3x3()
+    for f in bm.faces:
+        n = rot @ f.normal
+        ax = max(range(3), key=lambda k: abs(n[k]))
+        for loop in f.loops:
+            p = mw @ loop.vert.co
+            u, v = (p.x, p.y) if ax == 2 else (p.y, p.z) if ax == 0 else (p.x, p.z)
+            loop[uv].uv = (u / tile, v / tile)
+    bm.to_mesh(me)
+    bm.free()
     return obj
 
 
@@ -92,6 +114,235 @@ def shade_smooth(obj, angle_deg=40):
         for p in obj.data.polygons:
             p.use_smooth = True
     return obj
+
+
+# ---------- detailed and organic models ----------
+def _apply_modifier(obj, mod):
+    with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
+        bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=0)
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+
+
+def _tris(obj):
+    return sum(len(p.vertices) - 2 for p in obj.data.polygons)
+
+
+def _fbm(p, octaves=4):
+    from mathutils import noise
+    total, amp, norm, f = 0.0, 1.0, 0.0, 1.0
+    for _ in range(octaves):
+        total += amp * noise.noise(p * f)
+        norm += amp
+        amp *= 0.5
+        f *= 2.0
+    return total / norm
+
+
+def smooth(obj, level=2, bevel=0.0, noise=0.0, noise_size=0.5, seed=0, max_tris=None):
+    """Turn a blocky shape into a smooth, organic one.
+    level: subdivision steps (each multiplies triangles by 4). bevel: round off edges first (meters).
+    noise: bumps in meters (rocks, bark, cliffs), noise_size: how big the bumps are (meters).
+    max_tris: reduce the result to about this many triangles."""
+    if obj.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    if bevel > 0:
+        m = obj.modifiers.new("GS_Bevel", "BEVEL")
+        m.width = bevel
+        m.segments = 2
+        m.limit_method = "ANGLE"
+        _apply_modifier(obj, m)
+    if level > 0:
+        m = obj.modifiers.new("GS_Subdivision", "SUBSURF")
+        m.levels = m.render_levels = int(level)
+        _apply_modifier(obj, m)
+    if noise > 0:
+        off = Vector((seed * 13.7, seed * -7.3, seed * 5.1))
+        me = obj.data
+        me.update()
+        for v in me.vertices:
+            v.co += v.normal * (noise * _fbm(v.co / max(noise_size, 1e-3) + off, 3))
+        me.update()
+    for p in obj.data.polygons:
+        p.use_smooth = True
+    if max_tris and _tris(obj) > max_tris:
+        m = obj.modifiers.new("GS_Decimate", "DECIMATE")
+        m.ratio = max(0.01, max_tris / _tris(obj))
+        _apply_modifier(obj, m)
+    return obj
+
+
+TEXTURES_DIR = os.environ.get("GAMESMITH_TEXTURES", "")
+_TEXTURE_COLORS = [  # used when a texture couldn't be downloaded
+    ("snow", (0.92, 0.94, 0.97)), ("sand", (0.82, 0.72, 0.52)), ("beach", (0.82, 0.72, 0.52)), ("grass", (0.32, 0.45, 0.2)),
+    ("forest", (0.3, 0.27, 0.18)), ("leaves", (0.4, 0.3, 0.16)), ("mud", (0.35, 0.27, 0.2)), ("ground", (0.4, 0.33, 0.24)),
+    ("rock", (0.45, 0.43, 0.4)), ("cliff", (0.45, 0.43, 0.4)), ("stone", (0.55, 0.53, 0.5)), ("brick", (0.6, 0.3, 0.22)),
+    ("cobble", (0.5, 0.48, 0.45)), ("bark", (0.3, 0.22, 0.15)), ("wood", (0.5, 0.33, 0.18)), ("plank", (0.5, 0.33, 0.18)),
+    ("rust", (0.45, 0.25, 0.15)), ("metal", (0.6, 0.6, 0.62)), ("iron", (0.55, 0.55, 0.57)), ("denim", (0.2, 0.28, 0.45)),
+    ("leather", (0.4, 0.22, 0.12)),
+]
+MISSING_TEXTURES = []
+
+
+def _texture_file(tex_id, role):
+    d = os.path.join(TEXTURES_DIR, tex_id)
+    for ext in (".jpg", ".png"):
+        p = os.path.join(d, role + ext)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def texture(tex_id, tile=2.0, roughness=None):
+    """A photo-scanned PBR material from Poly Haven (CC0): color, normal and roughness maps.
+    tile: meters one copy of the image covers. assign(obj, texture(...)) also gives the object UVs."""
+    name = tex_id if abs(tile - 2.0) < 1e-6 else f"{tex_id} {tile:g}m"
+    m = bpy.data.materials.get(name)
+    if m:
+        return m
+    color = _texture_file(tex_id, "color")
+    if not color:
+        if tex_id not in MISSING_TEXTURES:
+            MISSING_TEXTURES.append(tex_id)
+        fallback = next((c for k, c in _TEXTURE_COLORS if k in tex_id), (0.6, 0.6, 0.6))
+        m = mat(name, fallback, roughness=0.85 if roughness is None else roughness)
+        m["gs_tile"] = float(tile)
+        return m
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = nt.nodes.get("Principled BSDF")
+
+    def image(path, non_color):
+        node = nt.nodes.new("ShaderNodeTexImage")
+        node.image = bpy.data.images.load(path, check_existing=True)
+        if non_color:
+            node.image.colorspace_settings.name = "Non-Color"
+        return node
+
+    nt.links.new(image(color, False).outputs["Color"], bsdf.inputs["Base Color"])
+    normal = _texture_file(tex_id, "normal")
+    if normal:
+        nmap = nt.nodes.new("ShaderNodeNormalMap")
+        nt.links.new(image(normal, True).outputs["Color"], nmap.inputs["Color"])
+        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+    rough = _texture_file(tex_id, "roughness")
+    if roughness is not None or not rough:
+        bsdf.inputs["Roughness"].default_value = 0.8 if roughness is None else roughness
+    else:
+        nt.links.new(image(rough, True).outputs["Color"], bsdf.inputs["Roughness"])
+    m["gs_tile"] = float(tile)
+    return m
+
+
+def _smoothstep(a, b, x):
+    t = min(1.0, max(0.0, (x - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+
+
+def _terrain_height(style, u, v, seed):
+    """Height 0..1-ish at u, v in -0.5..0.5 (the terrain's width is 1)."""
+    from mathutils import noise
+    off = Vector((seed * 31.7, seed * -19.3, seed * 7.9))
+    P = lambda a, b: Vector((a, b, 0.0)) + off
+    if style == "plains":
+        return 0.3 * _fbm(P(u * 2, v * 2), 4) + 0.06 * _fbm(P(u * 9, v * 9), 3)
+    if style == "mountains":
+        total, amp, norm, f = 0.0, 1.0, 0.0, 2.2
+        for _ in range(6):  # ridged noise: sharp crests, wide valleys
+            n = 1.0 - abs(noise.noise(P(u * f, v * f)))
+            total += amp * n * n
+            norm += amp
+            amp *= 0.5
+            f *= 2.03
+        return (total / norm) ** 1.7 + 0.15 * _fbm(P(u * 3, v * 3), 4)
+    if style == "islands":
+        r = math.hypot(u, v)
+        return (0.5 * _fbm(P(u * 3, v * 3), 5) + 0.5) * (1.0 - _smoothstep(0.18, 0.48, r))
+    if style == "valley":
+        x = u + 0.07 * math.sin(v * 7.0 + seed)
+        return 0.85 * _smoothstep(0.04, 0.42, abs(x)) + 0.22 * _fbm(P(u * 3, v * 3), 5)
+    if style == "dunes":
+        d = u * 0.8 + v * 0.6
+        wave = math.sin(d * 14.0 + 2.5 * _fbm(P(u * 2, v * 2), 3)) * 0.5 + 0.5
+        return 0.25 * wave ** 1.5 + 0.5 * _fbm(P(u * 1.5, v * 1.5), 3)
+    return 0.7 * _fbm(P(u * 2.5, v * 2.5), 4) + 0.3 * _fbm(P(u * 1.1, v * 1.1), 2)  # hills
+
+
+def terrain(size=60, height=8, style="hills", detail=96, seed=1, ground="grass_medium_01", rock="rock_face", snow="snow_02",
+            sand="coast_sand_01", snow_line=None, water=None, tile=4.0, rock_slope=32, name="Terrain"):
+    """A landscape size x size meters, centered on (0, 0), lowest point at z = 0, highest at `height`.
+    style: hills, mountains, islands, valley, plains or dunes. detail: grid cells per side (2 triangles each).
+    ground/rock/snow/sand: Poly Haven texture ids (None leaves that layer out). Steep faces (over rock_slope
+    degrees) get rock, faces above snow_line (meters) get snow, faces near the water level get sand.
+    water: a water surface at that height (meters)."""
+    detail = max(4, min(int(detail), 256))
+    if style == "dunes":  # a sand sea: sand everywhere unless asked otherwise
+        if ground == "grass_medium_01":
+            ground = sand
+        if rock == "rock_face":
+            rock = None
+    n = detail + 1
+    hs = [_terrain_height(style, i / detail - 0.5, j / detail - 0.5, seed) for j in range(n) for i in range(n)]
+    lo, hi = min(hs), max(hs)
+    span = (hi - lo) or 1.0
+    verts = [((i / detail - 0.5) * size, (j / detail - 0.5) * size, (hs[j * n + i] - lo) / span * height) for j in range(n) for i in range(n)]
+    faces = [(j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i) for j in range(detail) for i in range(detail)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], faces)
+    me.update()
+    obj = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(obj)
+
+    layers = [(key, tex) for key, tex in (("ground", ground), ("rock", rock), ("snow", snow if snow_line is not None else None),
+                                         ("sand", sand if water is not None else None)) if tex]
+    if not layers:
+        layers = [("ground", "grass_medium_01")]
+    slot = {}
+    for key, tex in layers:
+        slot[key] = len(me.materials)
+        me.materials.append(texture(tex, tile))
+    base = slot.get("ground", 0)
+    cos_rock = math.cos(math.radians(rock_slope))
+    beach = water + max(0.3, 0.04 * height) if water is not None else None
+    for p in me.polygons:
+        z = p.center.z
+        idx = base
+        if "rock" in slot and p.normal.z < cos_rock:
+            idx = slot["rock"]
+        if "snow" in slot and snow_line is not None and z > snow_line and p.normal.z > 0.6:
+            idx = slot["snow"]
+        if "sand" in slot and beach is not None and z < beach and p.normal.z > 0.75:
+            idx = slot["sand"]
+        p.material_index = idx
+        p.use_smooth = True
+    box_uv(obj, tile)
+
+    if water is not None:
+        wm = bpy.data.meshes.new("Water")
+        h = size / 2
+        wm.from_pydata([(-h, -h, water), (h, -h, water), (h, h, water), (-h, h, water)], [], [(0, 1, 2, 3)])
+        w = bpy.data.objects.new("Water", wm)
+        bpy.context.scene.collection.objects.link(w)
+        wmat = mat("Water", (0.16, 0.36, 0.48), roughness=0.05)
+        bsdf = wmat.node_tree.nodes.get("Principled BSDF")
+        bsdf.inputs["Alpha"].default_value = 0.75
+        try:
+            wmat.surface_render_method = "BLENDED"
+        except Exception:
+            wmat.blend_method = "BLEND"
+        assign(w, wmat)
+    bpy.context.view_layer.update()
+    return obj
+
+
+def ground(terrain_obj, x, y):
+    """The height of a terrain (or any mesh) at x, y, for placing things on it."""
+    bpy.context.view_layer.update()
+    inv = terrain_obj.matrix_world.inverted()
+    origin = inv @ Vector((x, y, 1e5))
+    direction = (inv.to_3x3() @ Vector((0, 0, -1))).normalized()
+    hit, loc, _n, _i = terrain_obj.ray_cast(origin, direction)
+    return (terrain_obj.matrix_world @ loc).z if hit else 0.0
 
 
 # ---------- animation ----------
@@ -467,7 +718,8 @@ def clips_info():
     ]
 
 
-HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS, "Matrix": Matrix, "Quaternion": Quaternion, "Euler": Euler, "LM": LM, "motions_dir": motions_dir, "asset_file": asset_file, "photo": photo}
+HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS, "Matrix": Matrix, "Quaternion": Quaternion, "Euler": Euler, "LM": LM, "motions_dir": motions_dir, "asset_file": asset_file, "photo": photo,
+           "smooth": smooth, "texture": texture, "terrain": terrain, "ground": ground, "box_uv": box_uv}
 
 
 # ---------- measuring ----------
@@ -595,7 +847,10 @@ def main():
         bpy.ops.object.select_all(action="DESELECT")
         for o in objs + [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]:
             o.select_set(True)
+        textured = any(img.source == "FILE" for img in bpy.data.images)
+        image_opts = {"export_image_format": "JPEG", "export_image_quality": 85} if textured else {}
         bpy.ops.export_scene.gltf(
+            **image_opts,
             filepath=out_glb,
             export_format="GLB",
             use_selection=True,
@@ -607,6 +862,8 @@ def main():
         if out_png != "-":
             render_preview(out_png, stats["bounds"], px)
         stats.pop("bounds", None)
+        if MISSING_TEXTURES:
+            stats["fallback_textures"] = MISSING_TEXTURES
         result = {"ok": True, "stats": stats, "blender": bpy.app.version_string}
     except Exception as e:
         tb = traceback.format_exc()

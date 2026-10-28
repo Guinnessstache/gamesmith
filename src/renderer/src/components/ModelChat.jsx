@@ -2,17 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 
 const STARTERS = [
   'A wooden treasure chest with gold trim',
-  'A low-poly pine tree, about 4 m tall',
+  'Snowy mountains around a lake, 100 m across',
+  'A mossy boulder with real rock textures',
   'A medieval wooden door with iron hinges',
-  'A simple sci-fi crate with glowing edges',
   'A blocky knight with idle, walk and attack animations'
 ]
-const FOLLOW_UPS = ['Animate it', 'Add more detail', 'Make it bigger', 'Use fewer triangles', 'Change the colors']
+const FOLLOW_UPS = ['Animate it', 'Add more detail', 'Use real textures', 'Make it smoother', 'Make it bigger', 'Use fewer triangles', 'Change the colors']
 
 const TOOL_LABELS = {
   read_script: () => 'Read the script',
   write_script: () => 'Wrote the script',
   edit_script: () => 'Edited the script',
+  find_textures: (a) => `Looked for textures${a?.query ? `: ${a.query}` : ''}`,
   build_model: () => 'Built it in Blender'
 }
 

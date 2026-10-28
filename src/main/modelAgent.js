@@ -35,9 +35,9 @@ How it works:
 Rules for game-ready models:
 - Units are meters, Z is up. The model stands on the ground: its lowest point at z = 0, centered on x = 0, y = 0. Front faces -Y.
 - Use real-world sizes (a door is about 2 m tall, a crate about 0.6 m, a person 1.75 m).
-- Keep it light: under 5,000 triangles for props, under 15,000 for vehicles or buildings. Low segment counts (8 to 24 for cylinders) are fine.
+- Keep it light: under 5,000 triangles for simple props, under 20,000 for detailed props, characters, vehicles or buildings, under 40,000 for terrain.
 - Build from primitives (bpy.ops.mesh.primitive_*_add), bmesh, or modifiers (bevel, mirror, array, solidify). Modifiers are applied on export.
-- Do not use external files, images, add-ons or bpy.ops that need a window (no view3d or screen operators, no edit-mode selection by mouse).
+- Do not load files yourself, use add-ons, or bpy.ops that need a window (no view3d or screen operators, no edit-mode selection by mouse). Images come only through texture().
 - Give parts names (obj.name = "Lid") and simple materials. Colors look best when not fully saturated.
 - Never delete or clear the scene; it starts empty. Do not save .blend files or export yourself.
 
@@ -46,11 +46,31 @@ Helpers already defined in the script (no import needed): bpy, bmesh, math, Vect
   assign(obj, material) -> obj   (replaces the object's materials)
   shade_smooth(obj, angle_deg=40) -> obj   (smooth shading with sharp edges kept)
 
+  smooth(obj, level=2, bevel=0.0, noise=0.0, noise_size=0.5, seed=0, max_tris=None) -> obj
+      rounds a blocky shape into a smooth, organic one (subdivision). bevel: round off edges first (meters).
+      noise: bumps in meters (rocks, tree trunks, cliffs). max_tris: reduce afterwards to stay game-sized.
+  texture(id, tile=2.0, tint=None, roughness=None) -> material
+      a real photo-scanned PBR surface from Poly Haven (CC0): color, normal and roughness maps. tile: meters one copy of
+      the image covers. assign() gives the object matching UVs automatically. Use find_textures to look up ids.
+      Good ids: wood: rough_wood, dark_wooden_planks, medieval_wood, old_planks_02, bark_brown_02 | stone: castle_brick_07,
+      medieval_blocks_02, mossy_stone_wall, patterned_cobblestone, red_brick_03 | rock: rock_face, rocky_terrain_02, mossy_rock,
+      cliff_side, rock_boulder_dry | ground: grass_medium_01, forrest_ground_01, forest_leaves_02, dry_ground_01, coast_sand_01,
+      snow_02 | metal: rusty_metal_02, metal_plate, corrugated_iron, painted_metal_shutter | fabric: denim_fabric, brown_leather, rough_linen
+  terrain(size=60, height=8, style="hills", detail=96, seed=1, ground=..., rock=..., snow=..., sand=..., snow_line=None, water=None) -> obj
+      a landscape centered on (0, 0) with its lowest point at z = 0. style: "hills", "mountains", "islands", "valley", "plains" or
+      "dunes". detail: grid cells per side (96 = 18k triangles). Faces get grass, rock on steep slopes, snow above snow_line
+      (meters) and sand near water. Pass a texture id to change one, or None to leave it out. water: water level in meters.
+  ground(terrain_obj, x, y) -> z   the terrain height at a point (to place trees, rocks, buildings on it)
+
 Example:
 bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.3, depth=0.9, location=(0, 0, 0.45))
 barrel = bpy.context.object
 barrel.name = "Barrel"
-assign(shade_smooth(barrel), mat("Wood", (0.45, 0.28, 0.14), roughness=0.8))
+assign(shade_smooth(barrel), texture("rough_wood", tile=1.0))
+
+Detailed and organic models: start from simple shapes, then smooth() them (a boulder: an icosphere with smooth(obj,
+level=2, noise=0.08) and texture("rock_boulder_dry")). Prefer texture() over flat mat() colors for natural and worn
+surfaces; keep mat() for paint, plastic, glowing parts and stylized looks.
 
 ANIMATION (only when the user asks for movement: opening, walking, idle, attacks, spinning...)
 Use the Rig helper. Moving parts must be separate objects. Build the model in its rest pose first, then:
@@ -135,6 +155,14 @@ export const MODEL_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'find_textures',
+      description: 'Search Poly Haven for photo-scanned textures to use with texture(id). Returns ids and names.',
+      parameters: { type: 'object', properties: { query: { type: 'string', description: 'e.g. "mossy stone", "wood planks", "sand"' } }, required: ['query'] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'build_model',
       description: 'Run model.py in Blender. Returns measurements (size in meters, triangles, materials) or the error with its line.',
       parameters: { type: 'object', properties: {} }
@@ -150,7 +178,9 @@ export function formatBuild(r) {
   const notes = []
   if (Math.abs(s.min_z) > 0.01) notes.push(`The lowest point is at z = ${s.min_z}, not 0: move it so it stands on the ground.`)
   if (Math.abs(s.center[0]) > 0.05 || Math.abs(s.center[1]) > 0.05) notes.push(`It is off-center (center x=${s.center[0]}, y=${s.center[1]}): center it on x = 0, y = 0.`)
-  if (s.triangles > 20000) notes.push(`${s.triangles} triangles is heavy for a web game: reduce segments or subdivisions.`)
+  if (s.triangles > 40000) notes.push(`${s.triangles} triangles is heavy for a web game: lower smooth() levels, add max_tris, or use less terrain detail.`)
+  for (const m of s.missingTextures || []) notes.push(`Texture "${m.id}" couldn't be downloaded (${m.error}); a plain color was used. Check the id with find_textures.`)
+  for (const id of s.fallback_textures || []) if (!(s.missingTextures || []).some((m) => m.id === id)) notes.push(`Texture "${id}" isn't available; a plain color was used.`)
   return [
     'Build OK.',
     `Size: ${s.size_m.width} m wide (X), ${s.size_m.depth} m deep (Y), ${s.size_m.height} m tall (Z).`,
@@ -164,7 +194,7 @@ export function formatBuild(r) {
  * Run one modeling request. deps: { id, ai, build: () => Promise<buildResult>, history, userText, emit, signal }
  * Returns { reply, changed, build }.
  */
-export async function runModelAgent({ id, ai, build, history = [], userText, emit = () => {}, signal }) {
+export async function runModelAgent({ id, ai, build, findTextures, history = [], userText, emit = () => {}, signal }) {
   if (!ai.model) throw new Error('No model selected. Open Settings and pick a model.')
   const meta = library.readMeta(id)
   const messages = [{ role: 'system', content: systemPrompt(meta, library.readScript(id)) }]
@@ -208,6 +238,11 @@ export async function runModelAgent({ id, ai, build, history = [], userText, emi
       }
       case 'build_model':
         return formatBuild(await doBuild())
+      case 'find_textures': {
+        if (!findTextures) return 'Texture search is unavailable; use one of the ids listed in the instructions.'
+        const found = await findTextures(String(args.query || ''))
+        return found.length ? found.map((t) => `${t.id}: ${t.name}${t.tags?.length ? ` (${t.tags.slice(0, 5).join(', ')})` : ''}`).join('\n') : 'Nothing found. Try a simpler word.'
+      }
       default:
         throw new Error(`Unknown tool "${name}". Available: ${MODEL_TOOLS.map((t) => t.function.name).join(', ')}`)
     }

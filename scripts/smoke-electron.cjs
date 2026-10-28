@@ -457,7 +457,7 @@ mock.listen(0, '127.0.0.1', async () => {
     check(await waitFor('.right > .chat .msg.ai:not(.live) .msg-text', 120000), 'modeling AI finished')
     const modelReq = requests.at(-1)
     check(modelReq.messages.find((m) => m.role === 'user')?.content === 'A wooden treasure chest with a gold lid', 'the description typed in New model was sent to the AI automatically')
-    check(modelReq.tools.map((t) => t.function.name).join(',') === 'read_script,write_script,edit_script,build_model', 'modeling AI has the Blender tools')
+    check(modelReq.tools.map((t) => t.function.name).join(',') === 'read_script,write_script,edit_script,find_textures,build_model', 'modeling AI has the Blender tools')
     check(fs.existsSync(path.join(libDir, 'treasure-chest', 'model.glb')) && fs.existsSync(path.join(libDir, 'treasure-chest', 'preview.png')), 'Blender built model.glb and preview.png')
     check(await waitFor('.asset-detail .stats', 10000), 'measurements shown')
     const statsText = await js(`document.querySelector('.asset-detail .stats').innerText`)
@@ -508,6 +508,18 @@ mock.listen(0, '127.0.0.1', async () => {
     check(/Animations/.test(await js(`document.querySelector('.asset-detail .stats').innerText`)), 'details list the animations')
     check(/3 animations/.test(await js(`[...document.querySelectorAll('.lib-item')].find(b => b.textContent.includes('Knight')).textContent`)), 'library shows the animation count')
     await shot('26b-blender-animations')
+
+    // Terrain with downloaded (mock) Poly Haven textures, shown in the 3D view
+    const landId = await js(`window.gs.library.create('Mountain lake', '')`)
+    const landCode = 't = terrain(size=60, height=12, style="mountains", detail=64, ground="rock_wall_10", rock="rock_wall_10", snow=None, water=2)\n'
+    await js(`window.gs.library.saveScript(${JSON.stringify(landId)}, ${JSON.stringify(landCode)})`)
+    const lb = await js(`window.gs.library.build(${JSON.stringify(landId)})`)
+    check(lb.ok && lb.stats.materials.includes('rock_wall_10 4m') && lb.stats.materials.includes('Water'), `terrain builds with textures downloaded on the way (${lb.error || lb.stats.materials})`)
+    await js(`[...document.querySelectorAll('.lib-item')].find(b => b.textContent.includes('Mountain lake')).click()`)
+    await sleep(2500)
+    const viewerError = await js(`document.querySelector('.asset-stage')?.innerText || ''`)
+    check(!/couldn't|error|failed/i.test(viewerError), 'textured terrain opens in the 3D view')
+    await shot('26c-terrain')
     await js(`document.querySelector('.game-tab').click()`)
     const gameChatVisible = await js(`!document.querySelector('.chat-slot').hidden`)
     check(gameChatVisible, 'game chat comes back on the Game tab')

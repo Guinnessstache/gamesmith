@@ -128,10 +128,12 @@ export function files(id) {
  * Run the asset's script in Blender. Output goes to temporary files first, so a
  * failed build never replaces the last good model.
  */
-export async function build(id, { blenderPath, runner, signal, commitMessage } = {}) {
+export async function build(id, { blenderPath, runner, signal, commitMessage, texturesDir, beforeRun } = {}) {
+  const missing = beforeRun ? await beforeRun(readScript(id)) : []
   const tmpGlb = safe(id, 'model.tmp.glb')
   const tmpPng = safe(id, 'preview.tmp.png')
-  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot() })
+  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot(), texturesDir })
+  if (missing?.length && r.ok) r.stats.missingTextures = missing
   if (!r.ok) {
     for (const f of [tmpGlb, tmpPng]) fs.rmSync(f, { force: true })
     return r

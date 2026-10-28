@@ -100,7 +100,7 @@ const result = await runModelAgent({
   build: () => library.build('treasure-chest', { blenderPath: exe, runner, commitMessage: false })
 })
 server.close()
-ok(requests[0].messages[0].content.includes('Treasure Chest') && requests[0].tools.length === 4, 'modeling AI gets the asset brief and 4 tools')
+ok(requests[0].messages[0].content.includes('Treasure Chest') && requests[0].tools.length === 5 && requests[0].tools.some((t) => t.function.name === 'find_textures'), 'modeling AI gets the asset brief and 5 tools (including texture search)')
 const fixMsg = requests[2].messages.at(-1).content
 ok(/failed/.test(fixMsg) && /AttributeError/.test(fixMsg) && /line 6/.test(fixMsg), 'automatic build found the error and sent it back with the line')
 ok(result.build?.ok, 'second build succeeded')
@@ -222,6 +222,71 @@ ok(/GLTFLoader/.test(assets.usageHint(rec, 'three-3d')) && /0\.82/.test(assets.u
 
   await library.removeMotion(saved.id)
   ok(library.listMotions().length === 0, 'motion removed')
+}
+
+// ---- detailed models: smooth(), Poly Haven textures, terrain() ----
+{
+  const { createRequire } = await import('node:module')
+  const { startMockPolyHaven } = createRequire(import.meta.url)('./mock-polyhaven.cjs')
+  const ph = await startMockPolyHaven()
+  const savedApi = process.env.GAMESMITH_POLYHAVEN_API
+  process.env.GAMESMITH_POLYHAVEN_API = ph.base
+  assets.configure({ cache: join(tmp, 'asset-cache') })
+
+  ok(
+    assets.texturesInScript('assign(r, texture("rock_wall_10", tile=1))\n# texture("in_a_comment")\nt = terrain(style="hills", ground="rock_wall_10", rock=None, snow="snow_02")').sort().join() ===
+      ['coast_sand_01', 'rock_wall_10', 'snow_02'].join(),
+    'texture ids found in a script (terrain defaults included, None and comments skipped)'
+  )
+  const code = `bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.5, location=(0, 0, 0.5))
+r = bpy.context.object
+r.name = "Boulder"
+before = len(r.data.polygons)
+smooth(r, level=3, noise=0.08, seed=4, max_tris=3000)
+assign(r, texture("rock_wall_10", tile=1.0))
+assert len(r.data.uv_layers) == 1, "textured objects get UVs"
+bpy.ops.mesh.primitive_cube_add(size=0.4, location=(1.5, 0, 0.2))
+assign(smooth(bpy.context.object, level=2, bevel=0.05), texture("no_such_texture_xyz"))
+t = terrain(size=40, height=6, style="mountains", detail=48, ground="rock_wall_10", rock=None, water=1.0)
+t.location.x = 30
+bpy.ops.mesh.primitive_cube_add(size=1)
+marker = bpy.context.object
+marker.name = "Marker"
+marker.location = (30, 0, ground(t, 30, 0) + 0.5)
+assert abs(marker.location.z - 0.5 - ground(t, 30, 0)) < 1e-6 and ground(t, 30, 0) >= 0
+`
+  const rock = await library.create('Detail test', '')
+  library.writeScript(rock.id, code)
+  const rb = await library.build(rock.id, {
+    blenderPath: exe,
+    runner,
+    commitMessage: false,
+    texturesDir: assets.texturesDir(),
+    beforeRun: (script) => assets.ensureTextures(assets.texturesInScript(script))
+  })
+  ok(rb.ok, `smooth, textures and terrain build${rb.ok ? '' : ': ' + rb.error + ' ' + (rb.where || '')}`)
+  ok(rb.ok && fs.existsSync(join(assets.texturesDir(), 'rock_wall_10', 'color.jpg')) && fs.existsSync(join(assets.texturesDir(), 'rock_wall_10', 'normal.jpg')), 'texture maps downloaded once into the cache')
+  ok(rb.ok && rb.stats.missingTextures?.some((m) => m.id === 'no_such_texture_xyz') && rb.stats.fallback_textures?.includes('no_such_texture_xyz'), 'an unknown texture falls back to a plain color and is reported')
+  ok(rb.ok && /couldn't be downloaded/.test(formatBuild(rb)), 'the modeling AI is told about it')
+  ok(rb.ok && rb.stats.triangles > 6000 && rb.stats.triangles < 3000 + 2500 + 48 * 48 * 2 + 20, `smoothing adds detail but respects max_tris (${rb.stats?.triangles} triangles in all)`)
+  ok(rb.ok && rb.stats.materials.includes('rock_wall_10 4m') && rb.stats.materials.includes('Water'), `terrain textured, with water (${rb.stats?.materials})`)
+  const glb = library.files(rock.id)['model.glb']
+  const gj = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'))
+  const rm = gj.materials.find((m) => m.name === 'rock_wall_10 1m')
+  ok(rm?.pbrMetallicRoughness?.baseColorTexture && rm.normalTexture && rm.pbrMetallicRoughness.metallicRoughnessTexture, 'color, normal and roughness maps are in the .glb')
+  ok(gj.images.every((i) => i.mimeType === 'image/jpeg'), 'textures packed as JPEG to keep models small')
+  ok(gj.materials.find((m) => m.name === 'Water')?.alphaMode === 'BLEND', 'water is see-through')
+  const again = (await assets.ensureTextures(['rock_wall_10'])).length === 0 && ph.state.requests.filter((r) => r.url.includes('/files/rock_wall_10')).length === 1
+  ok(again, 'already downloaded textures are not fetched again')
+
+  const styles = ['hills', 'mountains', 'islands', 'valley', 'plains', 'dunes']
+  const land = await library.create('Lands', '')
+  library.writeScript(land.id, styles.map((st, k) => `t${k} = terrain(size=20, height=5, style="${st}", detail=24, seed=${k + 1}, ground="rock_wall_10", rock=None)\nt${k}.location.x = ${k * 25}`).join('\n') + '\n')
+  const lb = await library.build(land.id, { blenderPath: exe, runner, commitMessage: false, texturesDir: assets.texturesDir() })
+  ok(lb.ok && lb.stats.objects === 6 && lb.stats.size_m.height === 5 && lb.stats.min_z === 0, `every terrain style builds 5 m tall from z = 0${lb.ok ? '' : ': ' + lb.error}`)
+
+  process.env.GAMESMITH_POLYHAVEN_API = savedApi
+  ph.server.close()
 }
 
 // ---- downloading portable Blender: blocked server, then a good mirror; checksum enforced ----

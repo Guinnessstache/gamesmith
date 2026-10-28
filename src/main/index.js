@@ -540,7 +540,16 @@ handle('blender:pickPath', async () => {
 
 let buildAbort = null
 async function buildAsset(id, commitMessage) {
-  const r = await library.build(id, { blenderPath: requireBlender(), runner: runnerPy(), signal: modelAbort?.signal || buildAbort?.signal, commitMessage })
+  const r = await library.build(id, {
+    blenderPath: requireBlender(),
+    runner: runnerPy(),
+    signal: modelAbort?.signal || buildAbort?.signal,
+    commitMessage,
+    texturesDir: assets.texturesDir(),
+    beforeRun: async (script) => {
+      return assets.ensureTextures(assets.texturesInScript(script))
+    }
+  })
   send('library:changed', { id })
   return r
 }
@@ -622,7 +631,8 @@ handle('model:run', async (id, userText) => {
       userText,
       emit,
       signal: modelAbort.signal,
-      build: () => buildAsset(id, false)
+      build: () => buildAsset(id, false),
+      findTextures: (q) => assets.search(q, 'textures', 8)
     })
     const oid = await localCommit(`AI: ${userText.replace(/\s+/g, ' ').slice(0, 72)}`).catch(() => null)
     history.push({ role: 'assistant', content: result.reply, time: Date.now(), build: result.build ? { ok: result.build.ok, error: result.build.error } : null, commit: oid, steps })

@@ -108,7 +108,7 @@ try {
   assert.equal(checks, 2, 'auto-check ran twice (fail, then pass)')
   assert.equal(result.reply, 'Fixed the error. Use the arrow keys to run faster.')
   assert.ok(seenRequests[0].messages[0].content.includes('GAME_DESIGN.md'), 'system prompt has design doc')
-  assert.ok(seenRequests[0].tools.length === 6, 'tools sent')
+  assert.ok(seenRequests[0].tools.length === 9, 'tools sent')
   const fixMsg = seenRequests[3].messages.at(-1).content
   assert.match(fixMsg, /TypeError: x is undefined/, 'errors fed back to model')
   assert.ok(events.some((e) => e.type === 'tool_end' && e.name === 'edit_file' && e.ok))

@@ -5,6 +5,7 @@ import CodeEditor from './CodeEditor.jsx'
 import Preview from './Preview.jsx'
 import Chat from './Chat.jsx'
 import PublishPanel from './PublishPanel.jsx'
+import AssetBrowser from './AssetBrowser.jsx'
 import { AiBadge, TemplateGlyph, isTextFile, isImage } from './ui.jsx'
 
 export default function Workspace({ project, settings, onClose, onOpenSettings }) {
@@ -14,6 +15,7 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
   const [leftPanel, setLeftPanel] = useState('files')
   const [historyTick, setHistoryTick] = useState(0)
   const [showPublish, setShowPublish] = useState(false)
+  const [draft, setDraft] = useState(null) // text to drop into the AI chat box
   const [pub, setPub] = useState(null) // publish status for the top bar
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
@@ -74,7 +76,7 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
   }, [refreshFiles])
 
   useEffect(() => {
-    if (active !== 'game' && !tabs.some((t) => t.path === active)) setActive('game')
+    if (active !== 'game' && active !== 'assets' && !tabs.some((t) => t.path === active)) setActive('game')
   }, [tabs, active])
 
   const openFile = async (path) => {
@@ -110,9 +112,9 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
       <header className="ws-bar">
         <button className="btn ghost back" onClick={onClose} title="Back to all games">‹ Games</button>
         <div className="ws-title">
-          <TemplateGlyph template={project.meta.template} />
+          <TemplateGlyph template={project.meta.template} engine={project.meta.engine} />
           <span className="ws-name">{project.meta.name}</span>
-          <span className="muted small">{project.meta.engine}</span>
+          <span className="muted small">{project.meta.engine}{project.meta.kind === 'node' ? ', own server' : ''}</span>
         </div>
         <div className="spacer" />
         {saveMsg && <span className={`save-msg ${saveMsg === 'Saved to GitHub' ? 'ok' : 'bad'}`}>{saveMsg}</span>}
@@ -148,6 +150,9 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
             <button className={`tab game-tab ${active === 'game' ? 'on' : ''}`} onClick={() => setActive('game')}>
               <span className="play-icon" aria-hidden>▶</span> Game
             </button>
+            <button className={`tab assets-tab ${active === 'assets' ? 'on' : ''}`} onClick={() => setActive('assets')}>
+              <span className="play-icon" aria-hidden>◆</span> Assets
+            </button>
             {tabs.map((t) => (
               <div key={t.path} className={`tab ${active === t.path ? 'on' : ''}`} onClick={() => setActive(t.path)} title={t.path}>
                 <span>{t.path.split('/').pop()}</span>
@@ -168,7 +173,21 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
           <div className="stage-wrap">
             {/* The preview stays mounted (and running) even while a file is open,
                 so the AI can always test the game. */}
-            <Preview url={project.url} />
+            <Preview url={project.url} serverGame={project.meta.kind === 'node'} initialServer={project.server} />
+            {active === 'assets' && (
+              <div className="editor-layer">
+                <AssetBrowser
+                  project={project}
+                  onUseInGame={(a) =>
+                    setDraft(
+                      a.type === 'pack'
+                        ? `Use images from the "${a.name}" pack (${a.entry}/) for `
+                        : `Use the ${a.name} (${a.entry}) in the game: `
+                    )
+                  }
+                />
+              </div>
+            )}
             {activeTab && (
               <div className="editor-layer">
                 {activeTab.image ? (
@@ -195,6 +214,8 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
             settings={settings}
             onOpenSettings={onOpenSettings}
             onOpenFile={openFile}
+            draft={draft}
+            onDraftUsed={() => setDraft(null)}
             onRunFinished={() => {
               refreshFiles()
               setHistoryTick((n) => n + 1)

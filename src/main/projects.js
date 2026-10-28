@@ -101,12 +101,33 @@ export function updateMeta(dir, patch) {
 }
 
 /** Recursively list project files as [{ path, size }] using forward slashes. */
+/**
+ * Simple names from the project's top-level .gitignore ("data/", "dist", "art-source/"),
+ * so generated or private folders don't clutter the file tree. Patterns with
+ * wildcards or slashes in the middle are left alone.
+ */
+export function ignoredTopLevel(projectDir) {
+  try {
+    return new Set(
+      readFileSync(join(projectDir, '.gitignore'), 'utf8')
+        .split(/\r?\n/)
+        .map((l) => l.trim().replace(/^\//, '').replace(/\/$/, ''))
+        .filter((l) => l && !l.startsWith('#') && !l.startsWith('!') && !/[*?[\]/]/.test(l))
+    )
+  } catch {
+    return new Set()
+  }
+}
+
 export function walk(projectDir, { skipLib = false } = {}) {
   const out = []
+  const ignored = ignoredTopLevel(projectDir)
   const visit = (abs, rel) => {
     for (const e of readdirSync(abs, { withFileTypes: true })) {
       if (HIDDEN.has(e.name)) continue
+      if (e.isDirectory() && e.name.startsWith('.')) continue // tool folders (.claude, .github, .vscode…)
       const childRel = rel ? `${rel}/${e.name}` : e.name
+      if (!rel && ignored.has(e.name)) continue
       if (skipLib && childRel === 'lib') continue
       const childAbs = join(abs, e.name)
       if (e.isDirectory()) visit(childAbs, childRel)

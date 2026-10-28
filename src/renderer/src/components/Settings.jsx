@@ -11,6 +11,23 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
   const [projectsDir, setProjectsDir] = useState(settings.projectsDir)
   const [clientId, setClientId] = useState(settings.github?.clientId || '')
   const [account, setAccount] = useState(undefined)
+  const [ppConnected, setPpConnected] = useState(null)
+  const [ppKey, setPpKey] = useState('')
+  const [ppMsg, setPpMsg] = useState({ state: 'idle', text: '' })
+  useEffect(() => {
+    window.gs.assets.polyPizzaStatus().then(setPpConnected)
+  }, [])
+  const connectPolyPizza = async () => {
+    setPpMsg({ state: 'busy', text: 'Checking…' })
+    try {
+      await window.gs.assets.setPolyPizzaKey(ppKey)
+      setPpConnected(true)
+      setPpKey('')
+      setPpMsg({ state: 'ok', text: 'Connected.' })
+    } catch (e) {
+      setPpMsg({ state: 'error', text: e.message })
+    }
+  }
   useEffect(() => {
     window.gs.github.account().then(setAccount)
   }, [])
@@ -154,6 +171,29 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
             <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Iv1.…" />
           </label>
         </details>
+
+        <h3>Asset libraries</h3>
+        <p className="muted small">
+          Poly Haven needs no setup. Poly Pizza (10,000+ low-poly models: vehicles, characters, buildings) needs a free API key from{' '}
+          <a href="https://poly.pizza/settings/api" target="_blank" rel="noreferrer">poly.pizza/settings/api</a>.
+        </p>
+        {ppConnected ? (
+          <div className="field-row">
+            <span className="grow-text">Poly Pizza is <strong>connected</strong>.</span>
+            <button className="btn ghost small" onClick={async () => { await window.gs.assets.setPolyPizzaKey(''); setPpConnected(false); setPpMsg({ state: 'idle', text: '' }) }}>Forget key</button>
+          </div>
+        ) : (
+          <div className="field-row">
+            <label className="field grow">
+              <span>Poly Pizza API key</span>
+              <input type="password" value={ppKey} onChange={(e) => setPpKey(e.target.value)} />
+            </label>
+            <button className="btn ghost" disabled={!ppKey.trim() || ppMsg.state === 'busy'} onClick={connectPolyPizza}>
+              {ppMsg.state === 'busy' ? 'Checking…' : 'Connect'}
+            </button>
+          </div>
+        )}
+        {ppMsg.text && ppMsg.state !== 'busy' && <span className={`test-msg ${ppMsg.state}`}>{ppMsg.text}</span>}
 
         <h3>Render</h3>
         <div className="field-row">

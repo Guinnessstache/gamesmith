@@ -96,3 +96,22 @@ export async function isDirty(dir) {
   const matrix = await git.statusMatrix({ fs, dir })
   return matrix.some(([, h, w, s]) => !(h === 1 && w === 1 && s === 1))
 }
+
+/** The checked-out branch (imported repos may use "master" or anything else). */
+export async function branch(dir) {
+  return (await git.currentBranch({ fs, dir, fullname: false }).catch(() => null)) || 'main'
+}
+
+/** Files in the commit that was last pushed to GitHub (what the hosts deploy), else HEAD. */
+export async function deployedFiles(dir) {
+  let ref = 'HEAD'
+  const b = await branch(dir)
+  try {
+    await git.resolveRef({ fs, dir, ref: `refs/remotes/origin/${b}` })
+    ref = `refs/remotes/origin/${b}`
+  } catch {
+    /* never pushed */
+  }
+  const oid = await git.resolveRef({ fs, dir, ref })
+  return { oid, files: await git.listFiles({ fs, dir, ref }) }
+}

@@ -8,11 +8,11 @@ import { api as githubApi } from './github.js'
 const RENDER_API = () => process.env.GAMESMITH_RENDER_API || 'https://api.render.com/v1'
 
 // ---------- GitHub Pages ----------
-export async function enablePages(owner, repo) {
+export async function enablePages(owner, repo, { branch = 'main', path = '/' } = {}) {
   try {
     const site = await githubApi(`/repos/${owner}/${repo}/pages`, {
       method: 'POST',
-      body: { build_type: 'legacy', source: { branch: 'main', path: '/' } }
+      body: { build_type: 'legacy', source: { branch, path } }
     })
     return { url: site.html_url, status: site.status || 'building' }
   } catch (e) {
@@ -40,20 +40,15 @@ export async function pagesStatus(owner, repo) {
 }
 
 // ---------- Render ----------
-let renderStore = { file: null, encrypt: (s) => s, decrypt: (s) => s }
-export function configureRenderStore(opts) {
-  renderStore = opts
+let renderStore = { get: () => ({}), set: async () => {} }
+export function configureRenderStore(secretStore) {
+  renderStore = secretStore
 }
 export function getRenderKey() {
-  try {
-    const s = JSON.parse(fs.readFileSync(renderStore.file, 'utf8'))
-    return s.key ? renderStore.decrypt(s.key) : null
-  } catch {
-    return null
-  }
+  return renderStore.get().key || null
 }
-export function setRenderKey(key) {
-  fs.writeFileSync(renderStore.file, JSON.stringify(key ? { key: renderStore.encrypt(key.trim()) } : {}))
+export async function setRenderKey(key) {
+  await renderStore.set(key ? { key: key.trim() } : {})
 }
 
 async function render(path, { method = 'GET', body, key = getRenderKey() } = {}) {
@@ -84,15 +79,15 @@ export async function renderWorkspaces(key) {
   return (list || []).map((x) => x.owner || x).map((o) => ({ id: o.id, name: o.name, type: o.type }))
 }
 
-export async function createRenderSite({ name, ownerId, repoUrl }) {
+export async function createRenderSite({ name, ownerId, repoUrl, branch = 'main', publishPath = './' }) {
   const body = {
     type: 'static_site',
     name: name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'my-game',
     ownerId,
     repo: repoUrl.replace(/\.git$/, ''),
-    branch: 'main',
+    branch,
     autoDeployTrigger: 'commit',
-    serviceDetails: { publishPath: './', buildCommand: 'echo "static game, no build needed"' }
+    serviceDetails: { publishPath, buildCommand: 'echo "static game, no build needed"' }
   }
   let json
   try {
@@ -114,6 +109,54 @@ export async function renderStatus(serviceId) {
   return { status: d?.status || 'unknown', updated: d?.finishedAt || d?.updatedAt || null }
 }
 
+/** An existing Render service that deploys this repo (games with their own server). */
+export async function findRenderService(repoHtmlUrl) {
+  const want = repoHtmlUrl.replace(/\.git$/, '').toLowerCase()
+  const list = await render('/services?limit=100')
+  const svc = (list || []).map((x) => x.service || x).find((s) => (s.repo || '').replace(/\.git$/, '').toLowerCase() === want)
+  return svc ? { serviceId: svc.id, url: svc.serviceDetails?.url, type: svc.type, name: svc.name, dashboardUrl: svc.dashboardUrl } : null
+}
+
 export async function triggerRenderDeploy(serviceId) {
   return render(`/services/${serviceId}/deploys`, { method: 'POST', body: {} })
+}
+
+// ---------- post-deploy check ----------
+// A host can say "live" while some files still fail for visitors: a CDN may
+// briefly cache a "not found" right after a first deploy, and file-name case
+// mismatches (fine on Windows, broken on Linux hosts) only show up online.
+// So after each deploy, request every file of the game from the live site.
+export async function verifySite(baseUrl, paths, { concurrency = 6, timeoutMs = 15000 } = {}) {
+  const base = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'
+  const queue = [...paths]
+  const failed = []
+  const check = async (p) => {
+    const url = base + p.split('/').map(encodeURIComponent).join('/')
+    for (const method of ['HEAD', 'GET']) {
+      try {
+        const res = await fetch(url, { method, redirect: 'follow', signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': 'Gamesmith deploy check' } })
+        if (method === 'GET') res.body?.cancel().catch(() => {})
+        if (res.ok) return null
+        if (method === 'HEAD' && (res.status === 405 || res.status === 501)) continue // host doesn't do HEAD
+        return { path: p, status: res.status }
+      } catch (e) {
+        if (method === 'GET') return { path: p, status: e.name === 'TimeoutError' ? 'timeout' : 'network error' }
+      }
+    }
+    return null
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      for (let p; (p = queue.shift()) !== undefined; ) {
+        const f = await check(p)
+        if (f) failed.push(f)
+      }
+    })
+  )
+  return { url: base, checked: paths.length, failed: failed.sort((a, b) => a.path.localeCompare(b.path)), at: Date.now() }
+}
+
+/** Which of the game's files a visitor's browser could request. */
+export function publicFiles(paths) {
+  return paths.filter((p) => !p.split('/').some((seg) => seg.startsWith('.')) && !/^(README|LICENSE|TODO|CHANGELOG)(\.\w+)?$/i.test(p))
 }

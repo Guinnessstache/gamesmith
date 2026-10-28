@@ -21,8 +21,8 @@ export function AiBadge({ settings, onClick }) {
   )
 }
 
-export function TemplateGlyph({ template }) {
-  if (template === 'three-3d') {
+export function TemplateGlyph({ template, engine = '' }) {
+  if (template === 'three-3d' || /three|babylon|playcanvas/i.test(engine)) {
     return (
       <svg className="glyph" viewBox="0 0 48 48" aria-hidden>
         <path d="M24 6 40 15v18L24 42 8 33V15z" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />

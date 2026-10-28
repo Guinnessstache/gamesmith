@@ -71,7 +71,7 @@ export default function PublishPanel({ project, settings, onClose, onChanged }) 
         ) : (
           <>
             <GitHubSection st={st} project={project} settings={settings} busy={busy} act={act} reload={load} />
-            <WebSection st={st} busy={busy} act={act} />
+            <WebSection st={st} busy={busy} act={act} onRecheck={async (host) => { await window.gs.publish.recheck(host); await load() }} />
           </>
         )}
       </div>
@@ -99,11 +99,18 @@ function GitHubSection({ st, project, settings, busy, act, reload }) {
   const [linkRef, setLinkRef] = useState('')
   const [showLink, setShowLink] = useState(false)
 
+  const [deviceErr, setDeviceErr] = useState('')
+  const [copied, setCopied] = useState(false)
+
   useEffect(
     () =>
       window.gs.github.onAuth((r) => {
-        setDevice(null)
-        reload()
+        setDevice((cur) => {
+          if (!cur || cur.id !== r.id) return cur // event from an older attempt
+          if (!r.ok) setDeviceErr(r.error)
+          return r.ok ? null : cur
+        })
+        if (r.ok) reload()
       }),
     [reload]
   )
@@ -114,15 +121,36 @@ function GitHubSection({ st, project, settings, busy, act, reload }) {
         <p className="muted">Your game's files are saved to a GitHub repository. That's also what the web hosts publish from.</p>
         {device ? (
           <div className="device-code">
-            <span className="muted small">Enter this code on the GitHub page that just opened (it's on your clipboard):</span>
-            <strong>{device.userCode}</strong>
-            <span className="status"><span className="spinner" aria-hidden /> Waiting for you to approve…</span>
-            <button className="btn ghost small" onClick={() => { window.gs.github.deviceCancel(); setDevice(null) }}>Cancel</button>
+            <span className="muted small">1. Your sign-in code (already copied):</span>
+            <div className="code-row">
+              <strong>{device.userCode}</strong>
+              <button
+                className="btn ghost small"
+                onClick={() => {
+                  navigator.clipboard.writeText(device.userCode)
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 1500)
+                }}
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <span className="muted small">2. Open GitHub, press Ctrl+V in the first box, then approve.</span>
+            <button className="btn play" onClick={() => window.gs.github.openVerification(device.verificationUri)}>Open GitHub</button>
+            {deviceErr ? (
+              <div className="notice error">
+                {deviceErr}
+                <button className="btn ghost small" onClick={() => { setDevice(null); setDeviceErr('') }}>Try again</button>
+              </div>
+            ) : (
+              <span className="status"><span className="spinner" aria-hidden /> Waiting for you to approve on GitHub…</span>
+            )}
+            <button className="linkish" onClick={() => { window.gs.github.deviceCancel(); setDevice(null); setDeviceErr('') }}>Cancel</button>
           </div>
         ) : (
           <>
             {settings.github?.clientId && (
-              <button className="btn play" disabled={!!busy} onClick={() => act('device', async () => setDevice(await window.gs.github.deviceStart()))}>
+              <button className="btn play" disabled={!!busy} onClick={() => act('device', async () => { setDeviceErr(''); setDevice(await window.gs.github.deviceStart()) })}>
                 Sign in with GitHub
               </button>
             )}
@@ -199,7 +227,7 @@ function GitHubSection({ st, project, settings, busy, act, reload }) {
   )
 }
 
-function WebSection({ st, busy, act }) {
+function WebSection({ st, busy, act, onRecheck }) {
   const [renderKey, setRenderKey] = useState('')
   const [workspaces, setWorkspaces] = useState(null)
   const [ownerId, setOwnerId] = useState('')
@@ -218,18 +246,27 @@ function WebSection({ st, busy, act }) {
 
   const locked = !st.repo
   return (
-    <Step n={2} title="Put it on the web" done={!!(st.pages?.status === 'built' || st.render?.status === 'live')}>
+    <Step n={2} title="Put it on the web" done={[st.pages, st.render].some((h) => h?.verify && !h.verify.error && !h.verify.failed?.length)}>
       {locked ? (
         <p className="muted">Save the game to GitHub first. Then pick a free host; every later "Save to GitHub" updates the live game automatically.</p>
       ) : (
         <div className="hosts">
+          {st.kind === 'node' ? (
+            <div className="host">
+              <div className="host-head">
+                <strong>GitHub Pages</strong>
+                <span className="muted small">Not available for this game</span>
+              </div>
+              <span className="muted small">This game runs its own server (multiplayer, saves). GitHub Pages only hosts plain files, so use Render.</span>
+            </div>
+          ) : (
           <div className="host">
             <div className="host-head">
               <strong>GitHub Pages</strong>
               <span className="muted small">Free, public repositories</span>
             </div>
             {st.pages ? (
-              <SiteLink url={st.pages.url} label={PAGES_LABEL[st.pages.status] || st.pages.status} bad={st.pages.status === 'errored'} error={st.pages.error} />
+              <SiteLink url={st.pages.url} label={PAGES_LABEL[st.pages.status] || st.pages.status} bad={st.pages.status === 'errored'} error={st.pages.error} verify={st.pages.verify} host="pages" onRecheck={onRecheck} />
             ) : (
               <button className="btn play" disabled={!!busy} onClick={() => act('pages', () => window.gs.publish.enablePages())}>
                 {busy === 'pages' ? 'Publishing…' : 'Publish on GitHub Pages'}
@@ -237,13 +274,14 @@ function WebSection({ st, busy, act }) {
             )}
           </div>
 
+          )}
           <div className="host">
             <div className="host-head">
               <strong>Render</strong>
               <span className="muted small">Free static hosting; later supports multiplayer servers</span>
             </div>
             {st.render ? (
-              <SiteLink url={st.render.url} label={RENDER_LABEL[st.render.status] || st.render.status} bad={/failed/.test(st.render.status || '')} />
+              <SiteLink url={st.render.url} label={RENDER_LABEL[st.render.status] || st.render.status} bad={/failed/.test(st.render.status || '')} verify={st.render.verify} host="render" onRecheck={onRecheck} />
             ) : !st.hasRenderKey ? (
               <form
                 className="field-row"
@@ -272,8 +310,8 @@ function WebSection({ st, busy, act }) {
                     </select>
                   </label>
                 )}
-                <button className="btn play" disabled={!!busy || !ownerId} onClick={() => act('render', () => window.gs.publish.createRender(ownerId))}>
-                  {busy === 'render' ? 'Publishing…' : 'Publish on Render'}
+                <button className="btn play" disabled={!!busy || (!ownerId && st.kind !== 'node')} onClick={() => act('render', () => window.gs.publish.createRender(ownerId))}>
+                  {busy === 'render' ? (st.kind === 'node' ? 'Looking…' : 'Publishing…') : st.kind === 'node' ? 'Find my Render service' : 'Publish on Render'}
                 </button>
               </div>
             )}
@@ -284,12 +322,42 @@ function WebSection({ st, busy, act }) {
   )
 }
 
-function SiteLink({ url, label, bad, error }) {
+function SiteLink({ url, label, bad, error, verify, host, onRecheck }) {
+  const [busy, setBusy] = useState(false)
+  const failing = verify?.failed?.length > 0
+  const shown = label === 'Live' && verify && !verify.error ? (failing ? 'Live, with problems' : 'Live') : label === 'Live' ? 'Checking files…' : label
+  const recheck = async () => {
+    setBusy(true)
+    try {
+      await onRecheck(host)
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <div className="site">
-      <span className={`site-state ${label === 'Live' ? 'live' : bad ? 'bad' : 'wait'}`}>{label}</span>
+      <span className={`site-state ${shown === 'Live' ? 'live' : bad || failing ? 'bad' : 'wait'}`}>{shown}</span>
       <a href={url} target="_blank" rel="noreferrer">{url}</a>
       {error && <span className="muted small">{error}</span>}
+      {label === 'Live' && verify && !verify.error && !failing && <span className="muted small">All {verify.checked} files load.</span>}
+      {failing && (
+        <div className="verify-fail">
+          <span className="small">
+            {verify.failed.length} of {verify.checked} files don't load on the live site:
+          </span>
+          <ul>
+            {verify.failed.slice(0, 8).map((f) => (
+              <li key={f.path}><code>{f.path}</code> ({f.status})</li>
+            ))}
+            {verify.failed.length > 8 && <li>…and {verify.failed.length - 8} more</li>}
+          </ul>
+          <span className="muted small">
+            Right after a first deploy this usually clears within 5 minutes. If it doesn't, check the file names: the host's servers treat capital letters as different, Windows doesn't.
+          </span>
+          <button className="btn ghost small" onClick={recheck} disabled={busy}>{busy ? 'Checking…' : 'Recheck'}</button>
+        </div>
+      )}
+      {verify?.error && <span className="muted small">Couldn't check the files: {verify.error}</span>}
     </div>
   )
 }

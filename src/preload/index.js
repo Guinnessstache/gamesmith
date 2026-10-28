@@ -32,13 +32,19 @@ contextBridge.exposeInMainWorld('gs', {
     create: (opts) => call('projects:create', opts),
     open: (dir) => call('projects:open', dir),
     close: () => call('projects:close'),
-    reveal: (rel) => call('projects:reveal', rel)
+    reveal: (rel) => call('projects:reveal', rel),
+    importGitHub: (ref) => call('projects:importGitHub', ref),
+    githubRepos: () => call('projects:githubRepos'),
+    openFolder: () => call('projects:openFolder'),
+    onImportProgress: (fn) => on('import:progress', fn)
   },
   preview: {
     reload: () => call('preview:reload'),
     openExternal: () => call('preview:openExternal'),
     onConsole: (fn) => on('preview:console', fn),
-    onReloading: (fn) => on('preview:reloading', fn)
+    onReloading: (fn) => on('preview:reloading', fn),
+    restartServer: () => call('server:restart'),
+    onServerStatus: (fn) => on('server:status', fn)
   },
   fs: {
     list: () => call('fs:list'),
@@ -55,6 +61,7 @@ contextBridge.exposeInMainWorld('gs', {
     signOut: () => call('github:signOut'),
     deviceStart: () => call('github:deviceStart'),
     deviceCancel: () => call('github:deviceCancel'),
+    openVerification: (url) => call('github:openVerification', url),
     onAuth: (fn) => on('github:auth', fn)
   },
   publish: {
@@ -63,11 +70,23 @@ contextBridge.exposeInMainWorld('gs', {
     linkRepo: (ref) => call('publish:linkRepo', ref),
     sync: (msg) => call('publish:sync', msg),
     enablePages: () => call('publish:enablePages'),
+    recheck: (host) => call('publish:recheck', host),
     createRender: (ownerId) => call('publish:createRender', ownerId)
   },
   render: {
     setKey: (k) => call('render:setKey', k),
     workspaces: () => call('render:workspaces')
+  },
+  assets: {
+    search: (q, type, source) => call('assets:search', q, type, source),
+    polyPizzaStatus: () => call('assets:polyPizzaStatus'),
+    setPolyPizzaKey: (k) => call('assets:setPolyPizzaKey', k),
+    plan: (id, type, res) => call('assets:plan', id, type, res),
+    list: () => call('assets:list'),
+    add: (o) => call('assets:add', o),
+    importZip: () => call('assets:importZip'),
+    remove: (id) => call('assets:remove', id),
+    onProgress: (fn) => on('assets:progress', fn)
   },
   openUrl: (url) => call('open:url', url),
   git: {

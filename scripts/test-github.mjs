@@ -121,17 +121,25 @@ process.env.GAMESMITH_GITHUB_API = `http://127.0.0.1:${port}/api`
 process.env.GAMESMITH_RENDER_API = `http://127.0.0.1:${port}/render`
 
 const github = await import(join(root, 'src/main/github.js'))
+const { createSecretStore } = await import(join(root, 'src/main/secretStore.js'))
+const fakeCrypto = { available: async () => true, encrypt: async (t) => Buffer.from('x' + t), decrypt: async (b) => ({ result: b.toString().slice(1) }) }
 const deploy = await import(join(root, 'src/main/deploy.js'))
 const { createProject } = await import(join(root, 'src/main/projects.js'))
 
 try {
-  github.configureStore({ file: join(tmp, 'github.json'), encrypt: (s) => `x${s}`, decrypt: (s) => s.slice(1) })
-  deploy.configureRenderStore({ file: join(tmp, 'render.json'), encrypt: (s) => s, decrypt: (s) => s })
+  const ghStore = createSecretStore({ file: join(tmp, 'github.json'), fields: ['token'], ...fakeCrypto })
+  await ghStore.load()
+  github.configureStore(ghStore)
+  const rStore = createSecretStore({ file: join(tmp, 'render.json'), fields: ['key'], ...fakeCrypto })
+  await rStore.load()
+  deploy.configureRenderStore(rStore)
 
   await assert.rejects(() => github.signInWithToken('wrong'), /Bad credentials/)
   const account = await github.signInWithToken('good-token')
   assert.equal(account.login, 'Guinnessstache')
-  assert.equal(JSON.parse(readFileSync(join(tmp, 'github.json'), 'utf8')).token, 'xgood-token', 'token stored through encrypt()')
+  const stored = JSON.parse(readFileSync(join(tmp, 'github.json'), 'utf8'))
+  assert.equal(stored.token, 'enc:' + Buffer.from('xgood-token').toString('base64'), 'token encrypted at rest')
+  assert.equal(stored.account.login, 'Guinnessstache', 'non-secret fields stay readable')
 
   const proj = await createProject({ projectsDir: join(tmp, 'projects'), resourcesDir: join(root, 'resources'), name: 'Space Goats', templateId: 'phaser-2d' })
   const repo = await github.createRepo(proj.dir, { name: 'Space Goats', isPrivate: false })
@@ -175,7 +183,7 @@ try {
   assert.equal((await deploy.pagesStatus('Guinnessstache', 'Space-Goats')).status, 'built')
 
   await assert.rejects(() => deploy.renderWorkspaces(), /API key/)
-  deploy.setRenderKey('rnd_test')
+  await deploy.setRenderKey('rnd_test')
   const ws = await deploy.renderWorkspaces()
   assert.deepEqual(ws[0], { id: 'tea-123', name: 'Jason', type: 'user' })
   const rs = await deploy.createRenderSite({ name: 'Space-Goats', ownerId: 'tea-123', repoUrl: repo.htmlUrl })

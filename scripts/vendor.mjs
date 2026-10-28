@@ -36,6 +36,7 @@ for (const f of [
   'controls/OrbitControls.js',
   'controls/PointerLockControls.js',
   'loaders/GLTFLoader.js',
+  'loaders/HDRLoader.js',
   'utils/BufferGeometryUtils.js',
   'utils/SkeletonUtils.js'
 ]) {

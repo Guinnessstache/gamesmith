@@ -45,10 +45,37 @@ function startMockServices(remoteRoot) {
       })
       return
     }
+    // Live "hosting": serve files from the pushed repo, like Pages/Render would.
+    // state.staleOnce lists paths that answer 404 once (a CDN's cached "not found").
+    if (url.startsWith('/site/')) {
+      const [, , site, ...rest] = decodeURIComponent(url.split('?')[0]).split('/')
+      const repo = state.repos.find((r) => r.toLowerCase() === site.toLowerCase())
+      const file = rest.join('/') || 'index.html'
+      state.siteRequests = (state.siteRequests || 0) + 1
+      if (!repo) { res.writeHead(404); return res.end() }
+      if (state.staleOnce?.has(file)) { state.staleOnce.delete(file); res.writeHead(404); return res.end('cached not found') }
+      try {
+        const out = execFileSync('git', ['--git-dir', join(remoteRoot, `${repo}.git`), 'show', `main:${file}`], { maxBuffer: 64 * 1024 * 1024 })
+        res.writeHead(200)
+        return res.end(req.method === 'HEAD' ? undefined : out)
+      } catch {
+        res.writeHead(404)
+        return res.end('not found')
+      }
+    }
     let body = ''
     req.on('data', (c) => (body += c))
     req.on('end', () => {
       const data = body ? JSON.parse(body) : null
+      if (url === '/web/login/device/code') {
+        state.devicePolls = 0
+        return json(res, 200, { device_code: 'dev-123', user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 1 })
+      }
+      if (url === '/web/login/oauth/access_token') {
+        state.devicePolls = (state.devicePolls || 0) + 1
+        if (state.devicePolls < 3) return json(res, 200, { error: 'authorization_pending' })
+        return json(res, 200, { access_token: 'ghp_testtoken', token_type: 'bearer', scope: 'repo' })
+      }
       if (url === '/api/user') {
         if (req.headers.authorization !== 'Bearer ghp_testtoken') return json(res, 401, { message: 'Bad credentials' })
         return json(res, 200, { login: 'Guinnessstache', id: 42, name: 'Jason Thistle', avatar_url: '' })
@@ -63,7 +90,7 @@ function startMockServices(remoteRoot) {
           html_url: `https://github.com/Guinnessstache/${data.name}`, clone_url: `http://127.0.0.1:${port}/git/${data.name}.git`, default_branch: 'main'
         })
       }
-      const pagesUrl = 'https://guinnessstache.github.io/Space-Goats/'
+      const pagesUrl = `http://127.0.0.1:${port}/site/Space-Goats/`
       if (url.endsWith('/pages') && req.method === 'POST') {
         state.pages = { at: Date.now() }
         return json(res, 201, { html_url: pagesUrl, status: null })
@@ -73,7 +100,7 @@ function startMockServices(remoteRoot) {
       if (url.startsWith('/render/owners')) return json(res, req.headers.authorization === 'Bearer rnd_testkey' ? 200 : 401, req.headers.authorization === 'Bearer rnd_testkey' ? [{ owner: { id: 'tea-1', name: 'Jason', type: 'user' } }] : { message: 'Unauthorized' })
       if (url === '/render/services' && req.method === 'POST') {
         state.render = data
-        return json(res, 201, { service: { id: 'srv-1', serviceDetails: { url: `https://${data.name}.onrender.com` } } })
+        return json(res, 201, { service: { id: 'srv-1', serviceDetails: { url: `http://127.0.0.1:${port}/site/${data.name}/` } } })
       }
       if (url.startsWith('/render/services/srv-1/deploys')) return json(res, 200, [{ deploy: { status: 'live' } }])
       json(res, 404, { message: `no mock for ${req.method} ${url}` })

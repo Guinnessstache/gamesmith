@@ -2,7 +2,7 @@
 
 Build browser games by describing them. Gamesmith is a desktop app (Electron) that pairs a live game preview and code editor with an AI agent running on your own model server, such as a Mac Studio on your network.
 
-**Version 0.2 (this build)**
+**Version 0.4 (this build)**
 - New games from a 2D (Phaser 3) or 3D (Three.js) starter template. Engines are bundled, so games run offline and deploy as plain static files.
 - Live preview with hot reload, a console panel, and "Open in browser".
 - An AI agent that reads and edits files, runs the game, reads the console errors, and fixes them on its own (up to 3 rounds by default).
@@ -11,7 +11,36 @@ Build browser games by describing them. Gamesmith is a desktop app (Electron) th
 - Monaco code editor (the same editor as VS Code), file tree, and asset import.
 - **Publish:** connect GitHub, create a repo and upload in one click, then publish to GitHub Pages and/or Render. Every later "Save to GitHub" updates the live game automatically.
 
-**Next:** Blender asset generation (glTF models straight into `assets/`).
+- **Assets:** browse and search Poly Haven's free CC0 library (3D models, tileable textures, HDRI skies) in the Assets tab, or import any asset pack zip (Kenney, itch.io). The AI can search for and download assets itself. Credits are kept in `assets/CREDITS.md`.
+
+- **Bring in existing games** from GitHub or a folder on your PC, including games with their own server (Gamesmith runs `npm install` / `npm start` and previews through the server, Socket.io included).
+- **Deploy check:** after each publish, every file is loaded from the live site; **Live** is only shown when they all load.
+
+**Next:** a scene editor for placing objects, then portable Blender (auto-downloaded, runs in the background) for AI-made models.
+
+## Bringing in an existing game
+
+On the home screen, click **Bring in a game**.
+
+- **From GitHub:** type `owner/name` or pick from your repositories (connect GitHub first to see private ones). Gamesmith clones it into your games folder, and **Save to GitHub** pushes back to the same repo.
+- **From a folder:** opens the game where it is; nothing is copied. If the folder isn't a git repo yet, Gamesmith starts tracking it so Undo and History work. If it's a Windows checkout with converted line endings, Gamesmith turns on `core.autocrlf` for that repo so files don't all look changed.
+
+Gamesmith's own data (chat, settings) lives in a hidden `.gamesmith/` folder that's excluded through `.git/info/exclude`; your `.gitignore` isn't touched.
+
+**Games with their own server** (a `package.json` with a `start` or `dev` script) need Node.js installed. Gamesmith gives the server a free port through `PORT`, shows its output in the console (tagged *server*), restarts it when server code changes and reloads the page when browser code changes. Publishing such a game needs a Render **web service**; if the repo already has one, the Publish panel finds it.
+
+The AI gets a different briefing for existing games: the README, scripts, a compact file list, and rules to follow the code's existing style and make small edits. It can search the code (`search_files`) and read big files in slices.
+
+## Assets
+
+Open the **Assets** tab next to **Game**.
+
+- **Models / Textures / Skies** search [Poly Haven](https://polyhaven.com). Pick one, choose the detail level (1k is right for most web games), and click **Add to game**. Files go to `assets/models`, `assets/textures` or `assets/skies`.
+- **Import pack (.zip)** unpacks a downloaded asset pack into `assets/packs/`. Kenney's packs at kenney.nl are free (CC0) and suit 2D games. Gamesmith reads the pack's license file and records it.
+- **In this game** lists what's been added. **Ask AI to use it** starts a chat message for you.
+- You can also just ask: "add a wooden barrel near the start" and the AI will search, download and place it, limited to 6 downloads per request.
+
+Every asset is recorded in `assets/ASSETS.json`, which the AI reads so it only uses files that exist.
 
 ## Publishing
 
@@ -103,6 +132,11 @@ src/main/          Electron main process (Node)
   git.js           Version history (isomorphic-git)
   github.js        GitHub sign-in, repo creation, push and merge
   deploy.js        GitHub Pages and Render publishing
+  assets.js        Poly Haven library, zip pack import, asset manifest
+  polypizza.js     Poly Pizza low-poly model library
+  importer.js      Import from GitHub / open folder, project detection
+  gameServer.js    Runs games' own servers (npm install/start)
+  secretStore.js   Encrypted storage for saved keys
 src/preload/       Safe bridge between the UI and main process
 src/renderer/      React UI
 resources/templates/  Starter games
@@ -116,6 +150,18 @@ npm run test:agent
 ```
 
 This runs the agent loop against a scripted mock model.
+
+```
+npm run test:assets
+```
+
+This covers the asset library against a mock Poly Haven shaped like the real API.
+
+```
+npm run test:import -- path/to/a/game/repo
+```
+
+Detection, Windows line endings, and (with a repo path) a full import of a real game: clone, install, start its server, proxy HTTP and Socket.io, restart, crash reporting.
 
 ```
 npm run test:github

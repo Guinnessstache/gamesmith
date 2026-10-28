@@ -5,6 +5,12 @@ const SUGGESTIONS = {
   'three-3d': ['Add obstacles that bump the ball away', 'Add a jump with the space bar', 'Make gems worth more the faster you collect them', 'Add a 60-second timer and a final score screen']
 }
 
+// Shown above the input once the conversation has started.
+const FOLLOW_UPS = {
+  'phaser-2d': ['Add a title screen', 'Add sound effects', 'Add enemies', 'Add a second level', 'Make it harder over time', 'Add a pause menu', 'Polish the visuals'],
+  'three-3d': ['Add a title screen', 'Add sound effects', 'Add obstacles', 'Add a timer', 'Make the camera smoother', 'Add a pause menu', 'Polish the lighting']
+}
+
 const TOOL_LABELS = {
   list_files: () => 'Looked at the files',
   read_file: (a) => `Read ${a.path || 'a file'}`,
@@ -25,11 +31,26 @@ function thinkingOf(seg) {
   return (seg.reasoning + tags).trim()
 }
 
-export default function Chat({ project, settings, onOpenSettings, onOpenFile, onRunFinished }) {
+export default function Chat({ project, settings, onOpenSettings, onOpenFile, onRunFinished, draft, onDraftUsed }) {
   const [turns, setTurns] = useState(project.chat || [])
   const [input, setInput] = useState('')
   const [live, setLive] = useState(null) // { segments: [], status }
   const scrollRef = useRef(null)
+  const inputRef = useRef(null)
+
+  // "Ask AI to use it" from the asset browser drops a started sentence here.
+  useEffect(() => {
+    if (!draft) return
+    setInput(draft)
+    onDraftUsed?.()
+    setTimeout(() => {
+      const el = inputRef.current
+      if (el) {
+        el.focus()
+        el.setSelectionRange(el.value.length, el.value.length)
+      }
+    }, 0)
+  }, [draft, onDraftUsed])
   const running = !!live
 
   useEffect(() => {
@@ -80,7 +101,7 @@ export default function Chat({ project, settings, onOpenSettings, onOpenFile, on
     setLive({ segments: [], status: 'Thinking…' })
     try {
       const result = await window.gs.ai.run(msg)
-      setTurns((t) => [...t, { role: 'assistant', content: result.reply, changedFiles: result.changedFiles, check: result.check, time: Date.now(), commit: result.commit, steps: result.steps }])
+      setTurns((t) => [...t, { role: 'assistant', content: result.reply, changedFiles: result.changedFiles, addedAssets: result.addedAssets, check: result.check, time: Date.now(), commit: result.commit, steps: result.steps }])
     } catch (e) {
       setTurns((t) => [...t, { role: 'assistant', content: `⚠ ${e.message}`, error: true, time: Date.now() }])
     } finally {
@@ -148,6 +169,7 @@ export default function Chat({ project, settings, onOpenSettings, onOpenFile, on
                 </details>
               )}
               <div className="msg-text">{t.content}</div>
+              {t.addedAssets?.length > 0 && <div className="small added-assets">Added assets: {t.addedAssets.join(', ')}</div>}
               {t.changedFiles?.length > 0 && (
                 <div className="changed">
                   {t.changedFiles.map((f) => (
@@ -157,7 +179,7 @@ export default function Chat({ project, settings, onOpenSettings, onOpenFile, on
               )}
               <div className="msg-foot">
                 {t.check && <CheckBadge result={t.check} />}
-                {t.commit && t.changedFiles?.length > 0 && !t.undone && (
+                {t.commit && (t.changedFiles?.length > 0 || t.addedAssets?.length > 0) && !t.undone && (
                   <button className="btn tiny ghost" onClick={() => undo(t)} disabled={running}>Undo these changes</button>
                 )}
                 {t.undone && <span className="muted small">Undone</span>}
@@ -203,6 +225,16 @@ export default function Chat({ project, settings, onOpenSettings, onOpenFile, on
         )}
       </div>
 
+      {!noModel && turns.length > 0 && !running && (
+        <div className="follow-ups">
+          {(FOLLOW_UPS[project.meta.template] || [])
+            .filter((f) => !turns.some((t) => t.role === 'user' && t.content === f))
+            .slice(0, 4)
+            .map((f) => (
+              <button key={f} className="chip" onClick={() => send(f)}>{f}</button>
+            ))}
+        </div>
+      )}
       {noModel ? (
         <div className="chat-input disabled">
           <span>Choose a model to start building.</span>
@@ -217,6 +249,7 @@ export default function Chat({ project, settings, onOpenSettings, onOpenFile, on
           }}
         >
           <textarea
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {

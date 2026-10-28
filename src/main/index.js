@@ -9,12 +9,59 @@ import { listModels } from './aiClient.js'
 import { runAgent } from './agent.js'
 import * as github from './github.js'
 import * as deploy from './deploy.js'
+import * as assets from './assets.js'
+import { createSecretStore } from './secretStore.js'
+import * as importer from './importer.js'
+import { GameServer } from './gameServer.js'
+import isoGit from 'isomorphic-git'
+import nodeFs from 'node:fs'
 
 const resourcesDir = app.isPackaged ? join(process.resourcesPath, 'resources') : join(__dirname, '../../resources')
 
 let win = null
 const preview = new PreviewServer()
+const gameServer = new GameServer()
 let current = null // { dir, meta }
+
+// Games with their own server: show its output in the console, and point the preview at it.
+gameServer.on('log', (e) => preview.addEntry(e))
+gameServer.on('status', (st) => {
+  send('server:status', st)
+  if (st.state === 'running') {
+    preview.setUpstream(st.port)
+    preview.reload()
+  } else if (st.state === 'crashed') preview.setUpstream(0, st.detail, { crashed: true })
+  else if (st.state !== 'stopped') preview.setUpstream(0, st.detail)
+})
+
+const CODE = /\.(m?js|cjs|ts|mts|json)$/i
+let restartTimer = null
+let reloadTimer = null
+/** For games with a server: restart it when server code changes, reload the page for anything else. */
+async function onServerGameChange(dir, meta, file) {
+  const ignored = await isoGit.isIgnored({ fs: nodeFs, dir, filepath: file }).catch(() => false)
+  if (ignored) return // e.g. the game writing its own save data
+  const inWeb = meta.webRoot && (file === meta.webRoot || file.startsWith(meta.webRoot + '/'))
+  const viteHandles = meta.usesVite && !/^(package(-lock)?\.json|vite\.config\.\w+)$/.test(file)
+  if (viteHandles) return // Vite's dev server hot-reloads on its own
+  if (!inWeb && (CODE.test(file) || file === 'package.json')) {
+    clearTimeout(restartTimer)
+    restartTimer = setTimeout(() => gameServer.restart(), 400)
+  } else {
+    clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => preview.reload(), 250)
+  }
+}
+
+async function startPreview(dir, meta) {
+  await gameServer.stop()
+  if (meta.kind === 'node') {
+    const url = await preview.start(dir, { proxy: true, onChange: (f) => onServerGameChange(dir, meta, f) })
+    gameServer.start(dir, meta) // installs packages if needed; status events update the preview
+    return url
+  }
+  return preview.start(dir, { webRoot: meta.webRoot })
+}
 let agentAbort = null
 
 const send = (channel, payload) => {
@@ -89,7 +136,40 @@ handle('dialog:pickFolder', async () => {
 })
 
 // ---------- projects ----------
-handle('projects:list', () => projects.listProjects(getSettings().projectsDir))
+handle('projects:list', () => {
+  const s = getSettings()
+  const inFolder = projects.listProjects(s.projectsDir)
+  const seen = new Set(inFolder.map((p) => p.dir))
+  const external = (s.externalProjects || [])
+    .filter((d) => !seen.has(d) && existsSync(join(d, '.gamesmith', 'project.json')))
+    .map((d) => {
+      try {
+        return { ...projects.readMeta(d), dir: d, modified: nodeFs.statSync(d).mtimeMs }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+  return [...inFolder, ...external].sort((a, b) => b.modified - a.modified)
+})
+handle('projects:importGitHub', async (ref) => {
+  return importer.importFromGitHub({
+    ref,
+    projectsDir: getSettings().projectsDir,
+    token: github.getToken(),
+    onProgress: (p) => send('import:progress', p)
+  })
+})
+handle('projects:githubRepos', () => github.listRepos())
+handle('projects:openFolder', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Open a game folder', properties: ['openDirectory'] })
+  if (r.canceled) return null
+  const dir = r.filePaths[0]
+  const out = await importer.openFolder(dir)
+  const s = getSettings()
+  if (!dir.startsWith(s.projectsDir)) setSettings({ externalProjects: [...new Set([...(s.externalProjects || []), dir])] })
+  return out
+})
 handle('projects:templates', () => projects.listTemplates(resourcesDir))
 handle('projects:create', async ({ name, templateId }) =>
   projects.createProject({ projectsDir: getSettings().projectsDir, resourcesDir, name, templateId })
@@ -100,14 +180,16 @@ handle('projects:open', async (dir) => {
   await git.ensureRepo(dir)
   const meta = projects.readMeta(dir)
   current = { dir, meta }
-  const url = await preview.start(dir)
-  return { dir, meta, url, chat: loadChat(dir) }
+  const url = await startPreview(dir, meta)
+  return { dir, meta, url, chat: loadChat(dir), server: meta.kind === 'node' ? { state: gameServer.state } : null }
 })
 handle('projects:close', async () => {
   agentAbort?.abort()
+  await gameServer.stop()
   await preview.stop()
   current = null
 })
+handle('server:restart', () => gameServer.restart())
 handle('projects:reveal', (rel) => {
   const { dir } = requireProject()
   shell.openPath(rel ? projects.safePath(dir, rel) : dir)
@@ -175,11 +257,12 @@ handle('agent:run', async (userText) => {
       history: history.slice(0, -1),
       userText,
       emit,
-      signal: agentAbort.signal
+      signal: agentAbort.signal,
+      resourcesDir
     })
     const label = userText.replace(/\s+/g, ' ').slice(0, 72)
     const oid = await git.commitAll(dir, `AI: ${label}`)
-    history.push({ role: 'assistant', content: result.reply, time: Date.now(), changedFiles: result.changedFiles, check: result.check, commit: oid, steps })
+    history.push({ role: 'assistant', content: result.reply, time: Date.now(), changedFiles: result.changedFiles, addedAssets: result.addedAssets, check: result.check, commit: oid, steps })
     saveChat(dir, history)
     emit({ type: 'done', ...result, commit: oid })
     return { ...result, commit: oid, steps }
@@ -194,34 +277,73 @@ handle('agent:run', async (userText) => {
   }
 })
 
+// ---------- assets ----------
+handle('assets:search', (query, type, source) => assets.search(query, type, 48, source || 'polyhaven'))
+handle('assets:polyPizzaStatus', () => assets.polyPizza.hasKey())
+handle('assets:setPolyPizzaKey', (key) => assets.polyPizza.setKey(key))
+handle('assets:plan', (id, type, res) => assets.plan(id, type, res))
+handle('assets:list', () => assets.readManifest(requireProject().dir).assets)
+handle('assets:add', async ({ id, type, res }) => {
+  const { dir } = requireProject()
+  const rec = await assets.addAsset(dir, { id, type, res, resourcesDir, onProgress: (p) => send('assets:progress', p) })
+  await git.commitAll(dir, `Added ${rec.name} from ${rec.source}`)
+  return rec
+})
+handle('assets:importZip', async () => {
+  const { dir } = requireProject()
+  const r = await dialog.showOpenDialog(win, { title: 'Import an asset pack', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Zip archives', extensions: ['zip'] }] })
+  if (r.canceled) return []
+  const out = []
+  for (const p of r.filePaths) out.push(assets.importZip(dir, p))
+  await git.commitAll(dir, `Imported ${out.map((x) => x.name).join(', ')}`)
+  return out
+})
+handle('assets:remove', async (id) => {
+  const { dir } = requireProject()
+  assets.removeAsset(dir, id)
+  await git.commitAll(dir, `Removed asset ${id}`)
+})
+
 // ---------- GitHub ----------
-function secretStore(name) {
-  const canEncrypt = () => safeStorage.isEncryptionAvailable()
-  return {
+function secretStore(name, fields) {
+  // Electron 45+: async safeStorage. Uses Windows DPAPI / macOS Keychain / libsecret.
+  return createSecretStore({
     file: join(app.getPath('userData'), name),
-    encrypt: (s) => (canEncrypt() ? 'enc:' + safeStorage.encryptString(s).toString('base64') : s),
-    decrypt: (s) => (s.startsWith('enc:') ? safeStorage.decryptString(Buffer.from(s.slice(4), 'base64')) : s)
-  }
+    fields,
+    available: () => safeStorage.isAsyncEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptStringAsync(text),
+    decrypt: (buf) => safeStorage.decryptStringAsync(buf)
+  })
 }
 
 let deviceAbort = null
+let deviceFlowId = 0
 handle('github:account', () => github.getAccount())
 handle('github:signInToken', (token) => github.signInWithToken(token))
-handle('github:signOut', () => github.signOut())
+handle('github:signOut', async () => github.signOut())
+// Gets a code and starts waiting for approval. The code is shown in the app
+// first; GitHub opens only when the user clicks (github:openVerification), so
+// the browser doesn't cover the code.
 handle('github:deviceStart', async () => {
   const clientId = getSettings().github?.clientId
   if (!clientId) throw new Error('No GitHub OAuth App client ID is set. Use a token instead, or add a client ID in Settings.')
   deviceAbort?.abort()
-  deviceAbort = new AbortController()
+  const controller = new AbortController()
+  deviceAbort = controller
+  const id = ++deviceFlowId
   const flow = await github.startDeviceFlow(clientId)
   clipboard.writeText(flow.user_code)
-  shell.openExternal(flow.verification_uri)
   github
-    .pollDeviceFlow(clientId, flow, deviceAbort.signal)
-    .then((account) => send('github:auth', { ok: true, account }))
-    .catch((e) => send('github:auth', { ok: false, error: e.message }))
-  return { userCode: flow.user_code, verificationUri: flow.verification_uri }
+    .pollDeviceFlow(clientId, flow, controller.signal)
+    .then((account) => send('github:auth', { id, ok: true, account }))
+    .catch((e) => {
+      // A flow replaced by a newer one, or cancelled by the user, ends quietly.
+      if (controller.signal.aborted) return
+      send('github:auth', { id, ok: false, error: e.message })
+    })
+  return { id, userCode: flow.user_code, verificationUri: flow.verification_uri, expiresIn: flow.expires_in }
 })
+handle('github:openVerification', (url) => /^https:\/\/github\.com\//.test(url) && shell.openExternal(url))
 handle('github:deviceCancel', () => deviceAbort?.abort())
 
 // ---------- publishing ----------
@@ -235,11 +357,52 @@ handle('publish:status', async () => {
     lastSync: meta.lastSync || null,
     unpushed: meta.github ? await github.unpushedCount(dir) : null,
     pages: meta.pages || null,
-    render: meta.render || null
+    render: meta.render || null,
+    kind: meta.kind || 'static',
+    webRoot: meta.webRoot || null
+  }
+  // Imported games may already be deployed on Render (e.g. a web service with its own server).
+  if (!out.render && out.hasRenderKey && meta.github && !renderLookupDone.has(dir)) {
+    renderLookupDone.add(dir)
+    const found = await deploy.findRenderService(meta.github.htmlUrl).catch(() => null)
+    if (found) {
+      projects.updateMeta(dir, { render: found })
+      out.render = found
+    }
   }
   if (out.pages && out.account) out.pages = { ...out.pages, ...(await deploy.pagesStatus(meta.github.owner, meta.github.name).catch((e) => ({ status: 'unknown', error: e.message }))) }
   if (out.render && out.hasRenderKey) out.render = { ...out.render, ...(await deploy.renderStatus(meta.render.serviceId).catch((e) => ({ status: 'unknown', error: e.message }))) }
+
+  // Once a host reports the deploy finished, check every file actually loads (once per deployed commit).
+  const hosts = [
+    ['pages', out.pages?.status === 'built'],
+    ['render', out.render?.status === 'live']
+  ]
+  for (const [host, done] of hosts) {
+    if (!done) continue
+    out[host].verify = await verifyHost(dir, host, out[host].url).catch((e) => ({ error: e.message }))
+  }
   return out
+})
+
+const renderLookupDone = new Set()
+const verifyCache = new Map() // `${dir}|${host}|${oid}` -> result
+async function verifyHost(dir, host, url, force = false) {
+  const { oid, files } = await git.deployedFiles(dir)
+  const key = `${dir}|${host}|${oid}`
+  if (!force && verifyCache.has(key)) return verifyCache.get(key)
+  const meta = projects.readMeta(dir)
+  const paths = meta.kind === 'node' ? [''] : deploy.publicFiles(importer.servedPaths(files, meta.webRoot))
+  const result = await deploy.verifySite(url, paths)
+  verifyCache.set(key, result)
+  return result
+}
+handle('publish:recheck', async (host) => {
+  const { dir } = requireProject()
+  const meta = projects.readMeta(dir)
+  const url = host === 'pages' ? meta.pages?.url : meta.render?.url
+  if (!url) throw new Error('This game is not published there yet')
+  return verifyHost(dir, host, url, true)
 })
 handle('publish:createRepo', async ({ name, isPrivate }) => {
   const { dir } = requireProject()
@@ -264,36 +427,65 @@ handle('publish:sync', async (message) => {
 })
 handle('publish:enablePages', async () => {
   const { dir } = requireProject()
-  const { github: repo } = projects.readMeta(dir)
+  const meta = projects.readMeta(dir)
+  const repo = meta.github
   if (!repo) throw new Error('Save the game to GitHub first')
-  const site = await deploy.enablePages(repo.owner, repo.name)
+  if (meta.kind === 'node') throw new Error("This game runs its own server, which GitHub Pages can't host. Use Render instead.")
+  const root = meta.webRoot && meta.webRoot !== '.' ? meta.webRoot : null
+  if (root && root !== 'docs') throw new Error(`GitHub Pages can only publish the top folder or docs/, and this game lives in ${root}/. Use Render instead.`)
+  const site = await deploy.enablePages(repo.owner, repo.name, { branch: await git.branch(dir), path: root ? '/docs' : '/' })
   projects.updateMeta(dir, { pages: { url: site.url } })
   return site
 })
 handle('render:setKey', async (key) => {
   if (key) await deploy.renderWorkspaces(key) // validate before saving
-  deploy.setRenderKey(key)
+  await deploy.setRenderKey(key)
   return !!key
 })
 handle('render:workspaces', () => deploy.renderWorkspaces())
 handle('publish:createRender', async (ownerId) => {
   const { dir, meta } = requireProject()
-  const { github: repo } = projects.readMeta(dir)
+  const m = projects.readMeta(dir)
+  const repo = m.github
   if (!repo) throw new Error('Save the game to GitHub first')
-  const site = await deploy.createRenderSite({ name: repo.name || meta.name, ownerId, repoUrl: repo.htmlUrl })
+  if (m.kind === 'node') {
+    const existing = await deploy.findRenderService(repo.htmlUrl)
+    if (!existing) {
+      throw new Error("This game runs its own server, so it needs a Render web service rather than a static site. Gamesmith can't create those yet: in Render choose New → Web Service (or New → Blueprint if the repo has render.yaml), pick this repo, then come back and click Find my Render service.")
+    }
+    projects.updateMeta(dir, { render: existing })
+    return existing
+  }
+  const site = await deploy.createRenderSite({
+    name: repo.name || meta.name,
+    ownerId,
+    repoUrl: repo.htmlUrl,
+    branch: await git.branch(dir),
+    publishPath: m.webRoot && m.webRoot !== '.' ? m.webRoot : './'
+  })
   projects.updateMeta(dir, { render: site })
   return site
 })
 handle('open:url', (url) => /^https:\/\//.test(url) && shell.openExternal(url))
 
 // ---------- app lifecycle ----------
-app.whenReady().then(() => {
-  github.configureStore(secretStore('github.json'))
-  deploy.configureRenderStore(secretStore('render.json'))
+app.whenReady().then(async () => {
+  const stores = {
+    github: secretStore('github.json', ['token']),
+    render: secretStore('render.json', ['key']),
+    polypizza: secretStore('polypizza.json', ['key'])
+  }
+  await Promise.all(Object.values(stores).map((st) => st.load())) // decrypt once, before any window opens
+  github.configureStore(stores.github)
+  assets.configure({ cache: join(app.getPath('userData'), 'asset-cache') })
+  assets.polyPizza.configureKeyStore(stores.polypizza)
+  deploy.configureRenderStore(stores.render)
   createWindow()
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
 })
+app.on('before-quit', () => gameServer.stop())
 app.on('window-all-closed', async () => {
+  await gameServer.stop()
   await preview.stop()
   if (process.platform !== 'darwin') app.quit()
 })

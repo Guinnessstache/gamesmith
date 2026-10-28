@@ -12,35 +12,20 @@ export const API = () => process.env.GAMESMITH_GITHUB_API || 'https://api.github
 const WEB = () => process.env.GAMESMITH_GITHUB_WEB || 'https://github.com'
 
 // ---------- token storage ----------
-let store = { file: null, encrypt: (s) => s, decrypt: (s) => s }
-export function configureStore({ file, encrypt, decrypt }) {
-  store = { file, encrypt, decrypt }
-}
-function readStore() {
-  try {
-    return JSON.parse(fs.readFileSync(store.file, 'utf8'))
-  } catch {
-    return {}
-  }
-}
-function writeStore(data) {
-  fs.writeFileSync(store.file, JSON.stringify(data, null, 2))
+// A secretStore (see secretStore.js): get() is sync, set() is async.
+let store = { get: () => ({}), set: async () => {} }
+export function configureStore(secretStore) {
+  store = secretStore
 }
 export function getToken() {
-  const s = readStore()
-  if (!s.token) return null
-  try {
-    return store.decrypt(s.token)
-  } catch {
-    return null
-  }
+  return store.get().token || null
 }
 export function getAccount() {
-  const s = readStore()
+  const s = store.get()
   return s.token ? s.account || null : null
 }
-export function signOut() {
-  writeStore({})
+export async function signOut() {
+  await store.set({})
 }
 
 // ---------- API helpers ----------
@@ -82,7 +67,7 @@ export async function signInWithToken(token) {
     avatar: user.avatar_url,
     email: `${user.id}+${user.login}@users.noreply.github.com`
   }
-  writeStore({ token: store.encrypt(token.trim()), account })
+  await store.set({ token: token.trim(), account })
   return account
 }
 
@@ -141,6 +126,13 @@ export async function createRepo(dir, { name, isPrivate, description }) {
   return repoInfo(repo)
 }
 
+/** The signed-in user's repositories, most recently updated first. */
+export async function listRepos() {
+  if (!getToken()) return []
+  const list = await api('/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator')
+  return list.map((r) => ({ fullName: r.full_name, name: r.name, private: r.private, description: r.description || '', updated: r.pushed_at || r.updated_at }))
+}
+
 /** Link to an existing repo given "owner/name" or a GitHub URL. */
 export async function linkRepo(dir, ref) {
   const m = String(ref).trim().match(/(?:github\.com[/:])?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/)
@@ -181,7 +173,7 @@ export async function sync(dir, { message = 'Saved from Gamesmith', account = ge
   const author = account ? { name: account.name, email: account.email } : undefined
   await localGit.commitAll(dir, message, author)
 
-  const ref = 'main'
+  const ref = await localGit.branch(dir)
   const push = () => git.push({ fs, http, dir, remote: 'origin', ref, onAuth, headers: authHeaders() })
   let pulled = 0
   try {
@@ -221,7 +213,7 @@ export async function unpushedCount(dir) {
     if (!remotes.some((r) => r.remote === 'origin')) return null
     let remoteOid
     try {
-      remoteOid = await git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' })
+      remoteOid = await git.resolveRef({ fs, dir, ref: `refs/remotes/origin/${await localGit.branch(dir)}` })
     } catch {
       return null
     }

@@ -39,7 +39,12 @@ const script = [
     }
   },
   { tool: { name: 'check_game', args: {} } },
-  { text: 'Fixed the crash (the enemy group did not exist yet) and made the player pink. Press the arrow keys to try it.' }
+  { text: 'Fixed the crash (the enemy group did not exist yet) and made the player pink. Press the arrow keys to try it.' },
+  // Second request (3D game): the AI finds and downloads assets itself.
+  { tool: { name: 'search_assets', args: { query: 'crate', type: 'models' } } },
+  { tool: { name: 'add_asset', args: { id: 'wooden_crate_01', type: 'models' } } },
+  { tool: { name: 'add_asset', args: { id: 'kloofendal_48d_partly_cloudy_puresky', type: 'hdris' } } },
+  { text: 'Added a wooden crate and a cloudy sky.' }
 ]
 let turn = 0
 const requests = []
@@ -82,11 +87,21 @@ mock.listen(0, '127.0.0.1', async () => {
   const services = await require('./mock-services.cjs').startMockServices(path.join(tmp, 'remote'))
   process.env.GAMESMITH_GITHUB_API = `http://127.0.0.1:${services.port}/api`
   process.env.GAMESMITH_RENDER_API = `http://127.0.0.1:${services.port}/render`
+  process.env.GAMESMITH_GITHUB_WEB = `http://127.0.0.1:${services.port}/web`
+  const polyhaven = await require('./mock-polyhaven.cjs').startMockPolyHaven()
+  process.env.GAMESMITH_POLYHAVEN_API = polyhaven.base
+  if (process.env.SC_REPO) {
+    // A real game with its own server, served by the test git server for "import from GitHub"
+    require('node:child_process').execFileSync('git', ['clone', '-q', '--bare', process.env.SC_REPO, path.join(tmp, 'remote', 'shattered-crown.git')])
+    process.env.GAMESMITH_CLONE_URL_OVERRIDE = `http://127.0.0.1:${services.port}/git/{name}.git`
+  }
+  const polypizza = await require('./mock-polyhaven.cjs').startMockPolyPizza()
+  process.env.GAMESMITH_POLYPIZZA_API = polypizza.api
   const projectsDir = path.join(tmp, 'projects')
   fs.mkdirSync(path.join(tmp, 'userData'), { recursive: true })
   fs.writeFileSync(
     path.join(tmp, 'userData', 'settings.json'),
-    JSON.stringify({ projectsDir, ai: { preset: 'custom', baseUrl: `http://127.0.0.1:${port}/v1`, model: 'qwen-coder-mock:32b', host: 'Mac-Studio.local', port: 11434 } })
+    JSON.stringify({ projectsDir, ai: { preset: 'custom', baseUrl: `http://127.0.0.1:${port}/v1`, model: 'qwen-coder-mock:32b', host: 'Mac-Studio.local', port: 11434 }, github: { clientId: 'Ov23-test' } })
   )
 
   require(path.join(__dirname, '..', 'out', 'main', 'index.js'))
@@ -100,6 +115,14 @@ mock.listen(0, '127.0.0.1', async () => {
     await sleep(400)
     const img = await win.webContents.capturePage()
     fs.writeFileSync(path.join(shotDir, `${name}.png`), img.toPNG())
+  }
+  const openGame = async (name) => {
+    const sel = `[...document.querySelectorAll('.project-card')].find(b => b.textContent.includes(${JSON.stringify(name)}))`
+    for (let i = 0; i < 100; i++) {
+      if (await js(`!!${sel}`)) return js(`${sel}.click()`)
+      await sleep(100)
+    }
+    throw new Error(`game card "${name}" never appeared`)
   }
   const waitFor = async (selector, timeout = 20000) => {
     const start = Date.now()
@@ -126,7 +149,7 @@ mock.listen(0, '127.0.0.1', async () => {
     await shot('3-home-with-games')
 
     // Open the 3D game first to check it renders
-    await js(`[...document.querySelectorAll('.project-card')].find(b => b.textContent.includes('Marble Run')).click()`)
+    await openGame('Marble Run')
     check(await waitFor('.workspace iframe'), 'workspace opens with preview')
     await sleep(3500)
     await shot('4-workspace-3d')
@@ -134,7 +157,7 @@ mock.listen(0, '127.0.0.1', async () => {
     await waitFor('.project-card:not(.new)')
 
     // Open the 2D game and ask the AI for a change
-    await js(`[...document.querySelectorAll('.project-card')].find(b => b.textContent.includes('Space Goats')).click()`)
+    await openGame('Space Goats')
     await waitFor('.workspace iframe')
     await sleep(3000)
     await shot('5-workspace-2d')
@@ -193,9 +216,13 @@ mock.listen(0, '127.0.0.1', async () => {
     await clickText('Publish')
     await waitFor('.publish')
     await shot('11-publish-connect')
-    await setInput('.publish input[type=password]', 'ghp_testtoken')
-    await clickText('Connect')
-    check(await waitFor('.publish .pub-row, .publish input:not([type])', 10000), 'GitHub token accepted')
+    await clickText('Sign in with GitHub')
+    check(await waitFor('.device-code strong', 8000), 'device code shown')
+    await sleep(1500)
+    const code = await js(`document.querySelector('.device-code strong')?.textContent`)
+    check(code === 'ABCD-1234', `device code stays on screen while waiting (${code})`)
+    await shot('11b-device-code')
+    check(await waitFor('.publish .pub-row, .publish input:not([type])', 15000), 'GitHub device sign-in completed')
     await shot('12-publish-create-repo')
     await clickText('Create and upload')
     check(await waitFor('.repo-link', 30000), 'repo created and first upload done')
@@ -203,6 +230,7 @@ mock.listen(0, '127.0.0.1', async () => {
     const remoteFiles = require('node:child_process').execFileSync('git', ['--git-dir', bare, 'ls-tree', '-r', '--name-only', 'main']).toString()
     check(remoteFiles.includes('src/scenes/GameScene.js') && remoteFiles.includes('lib/phaser/phaser.min.js'), 'game files are on the (mock) GitHub repo')
 
+    services.state.staleOnce = new Set(['src/scenes/GameScene.js']) // first live request gets a stale 404
     await clickText('Publish on GitHub Pages')
     check(await waitFor('.site a', 15000), 'GitHub Pages site link shown')
     await shot('13-publish-pages-updating')
@@ -220,10 +248,30 @@ mock.listen(0, '127.0.0.1', async () => {
     })()
     check(renderShown, 'Render site link shown')
     check(services.state.render?.serviceDetails?.publishPath === './', 'Render static site created with publishPath ./')
-    await sleep(6000) // let the Pages status poll flip to Live
+    // Pages: the stale 404 must be caught, then cleared by Recheck
+    const pagesProblem = await (async () => {
+      for (let i = 0; i < 60; i++) {
+        const t = await js(`document.querySelector('.verify-fail')?.innerText || ''`)
+        if (t) return t
+        await sleep(250)
+      }
+      return ''
+    })()
+    check(/1 of \d+ files don't load/.test(pagesProblem) && /src\/scenes\/GameScene\.js \(404\)/.test(pagesProblem), 'deploy check catches a file the live site 404s')
+    await shot('14a-verify-failed')
+    await js(`[...document.querySelectorAll('.verify-fail button')].find(b => b.textContent === 'Recheck').click()`)
+    const allLive = await (async () => {
+      for (let i = 0; i < 80; i++) {
+        const n = await js(`[...document.querySelectorAll('.site-state')].filter(e => e.textContent === 'Live').length`)
+        if (n === 2) return true
+        await sleep(250)
+      }
+      return false
+    })()
+    check(allLive, 'both hosts show Live once every file loads')
+    const allLoad = await js(`[...document.querySelectorAll('.site .muted.small')].map(e => e.textContent).filter(t => /^All [0-9]+ files load[.]$/.test(t)).length`)
+    check(allLoad === 2, 'each host reports all files load')
     await shot('14-publish-live')
-    const liveCount = await js(`[...document.querySelectorAll('.site-state')].filter(e => e.textContent === 'Live').length`)
-    check(liveCount === 2, `both hosts show Live (${liveCount})`)
 
     // Quick save from the top bar after an edit
     await js(`[...document.querySelectorAll('.publish-head .btn')][0].click()`)
@@ -236,6 +284,149 @@ mock.listen(0, '127.0.0.1', async () => {
     const remoteAuthor = require('node:child_process').execFileSync('git', ['--git-dir', bare, 'log', '-1', '--format=%an', 'main']).toString().trim()
     check(remoteAuthor === 'Jason Thistle', `manual save is authored by the GitHub account (${remoteAuthor})`)
     await shot('15-workspace-published')
+
+    // ---- Asset browser (3D game) ----
+    await js(`document.querySelector('.back').click()`)
+    await waitFor('.project-card:not(.new)')
+    await openGame('Marble Run')
+    await waitFor('.workspace iframe')
+    await js(`document.querySelector('.assets-tab').click()`)
+    check(await waitFor('.asset-card', 10000), 'asset browser lists Poly Haven models')
+    await setInput('.asset-search', 'barrel')
+    await sleep(900)
+    const names = await js(`[...document.querySelectorAll('.asset-name')].map(e => e.textContent)`)
+    check(names.length === 1 && names[0] === 'Barrel 03', `search narrows results (${names.join(', ')})`)
+    await js(`document.querySelector('.asset-card').click()`)
+    check(await waitFor('.asset-detail .btn.play:not([disabled])', 10000), 'asset detail shows size and Add button')
+    const addLabel = await js(`document.querySelector('.asset-detail .btn.play').textContent`)
+    check(/Add to game \(\d+ KB\)/.test(addLabel), `download size shown before adding ("${addLabel}")`)
+    await shot('16-asset-detail')
+    await js(`document.querySelector('.asset-detail .btn.play').click()`)
+    check(await waitFor('.asset-detail .installed', 15000), 'asset added to the game')
+    const marble = path.join(projectsDir, 'marble-run')
+    check(fs.existsSync(path.join(marble, 'assets/models/barrel_03/barrel_03.gltf')) && fs.existsSync(path.join(marble, 'assets/models/barrel_03/barrel_03.bin')), 'model + .bin on disk')
+    check(/Barrel 03/.test(fs.readFileSync(path.join(marble, 'assets/CREDITS.md'), 'utf8')), 'credits file updated')
+    const footer = await js(`document.querySelector('.assets-foot a')?.textContent`)
+    check(footer === 'Powered by Poly Haven', 'Poly Haven credit visible')
+    await js(`[...document.querySelectorAll('.seg.inline button')].find(b => b.textContent.startsWith('In this game')).click()`)
+    await waitFor('.mine-list li')
+    await shot('17-assets-in-game')
+
+    // Poly Pizza: empty Poly Haven search points there; key form; low-poly search; CC-BY credit
+    await js(`[...document.querySelectorAll('.seg.inline button')].find(b => b.textContent === 'Models').click()`)
+    await waitFor('.asset-search')
+    await setInput('.asset-search', 'bike')
+    check(await waitFor('.empty-hint', 8000), 'empty Poly Haven search suggests low-poly library')
+    await shot('17b-empty-hint')
+    await js(`document.querySelector('.empty-hint .btn').click()`)
+    check(await waitFor('.pp-key', 5000), 'Poly Pizza asks for a key')
+    await setInput('.pp-key input', 'pp_badkey')
+    await js(`document.querySelector('.pp-key .btn.play').click()`)
+    check(await waitFor('.pp-key .notice.error', 8000), 'bad Poly Pizza key rejected with a message')
+    await setInput('.pp-key input', 'pp_testkey')
+    await js(`document.querySelector('.pp-key .btn.play').click()`)
+    check(await waitFor('.asset-card', 10000), 'Poly Pizza popular models shown after connecting')
+    await setInput('.asset-search', 'car')
+    await sleep(900)
+    const ppNames = await js(`[...document.querySelectorAll('.asset-name')].map(e => e.textContent)`)
+    check(ppNames.join(',') === 'Red Sports Car,Delivery Truck', `low-poly search finds vehicles (${ppNames.join(', ')})`)
+    const badges = await js(`[...document.querySelectorAll('.asset-card .lic')].map(e => e.textContent)`)
+    check(badges.join(',') === 'CC0,Credit', `license badges shown (${badges.join(', ')})`)
+    await js(`[...document.querySelectorAll('.asset-card')][1].click()`)
+    await waitFor('.asset-detail .btn.play:not([disabled])', 10000)
+    const detailText = await js(`document.querySelector('.asset-detail').innerText`)
+    check(/CC-BY/.test(detailText) && /credit required/.test(detailText), 'detail explains the credit requirement')
+    await shot('17c-polypizza')
+    await js(`document.querySelector('.asset-detail .btn.play').click()`)
+    check(await waitFor('.asset-detail .installed', 15000), 'low-poly model added')
+    check(fs.existsSync(path.join(marble, 'assets/models/delivery-truck-TruckX3/delivery-truck.glb')), 'truck .glb on disk')
+    check(/Jarlan Perez/.test(fs.readFileSync(path.join(marble, 'assets/CREDITS.md'), 'utf8')), 'CC-BY creator credited')
+    await js(`document.querySelector('.ai-badge').click()`)
+    await waitFor('.modal.wide')
+    await sleep(600) // connection status loads asynchronously
+    const settingsText = await js(`document.querySelector('.modal.wide').innerText`)
+    if (!/Poly Pizza is connected/.test(settingsText)) console.log('SETTINGS TEXT:', settingsText.slice(0, 1500))
+    check(/Asset libraries/.test(settingsText) && /Poly Pizza is connected/.test(settingsText), 'Settings shows Poly Pizza connected')
+    await js(`[...document.querySelectorAll('.modal .btn.ghost')].find(b => b.textContent === 'Cancel').click()`)
+    await js(`[...document.querySelectorAll('.seg.inline button')].find(b => b.textContent.startsWith('In this game')).click()`)
+    await waitFor('.mine-list li')
+
+    // "Ask AI to use it" drops a started request into the chat box
+    await js(`[...document.querySelectorAll('.mine-list li')].find(li => li.textContent.includes('Barrel 03')).querySelector('.btn.ai').click()`)
+    await sleep(400)
+    const draftText = await js(`document.querySelector('.chat-input textarea').value`)
+    check(draftText.startsWith('Use the Barrel 03 (assets/models/barrel_03/barrel_03.gltf)'), 'chat box pre-filled from asset')
+
+    // The AI searches and downloads assets on its own
+    await js(`(() => { const t = document.querySelector('.chat-input textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'Add some crates and a nice sky'); t.dispatchEvent(new Event('input', { bubbles: true })); })()`)
+    await sleep(200)
+    await js(`document.querySelector('.chat-input .btn.ai').click()`)
+    check(await waitFor('.msg.ai:not(.live) .msg-text', 60000), 'AI asset request finished')
+    check(fs.existsSync(path.join(marble, 'assets/models/wooden_crate_01/wooden_crate_01.gltf')), 'AI downloaded the crate model')
+    check(fs.existsSync(path.join(marble, 'assets/skies/kloofendal_48d_partly_cloudy_puresky_1k.hdr')), 'AI downloaded the sky')
+    const toolResult = requests.at(-1).messages.filter((m) => m.role === 'tool').map((m) => m.content).join('\n')
+    check(/HDRLoader/.test(toolResult) && /GLTFLoader/.test(toolResult), 'AI was told exactly how to load each asset')
+    const fixPrompts3d = requests.slice(-4).filter((r) => /I ran the game and it has problems/.test(r.messages.at(-1).content)).length
+    check(fixPrompts3d === 0, 'no auto-fix rounds wasted on a missing GPU')
+    const chat3d = await js(`document.querySelector('.chat-scroll').innerText`)
+    check(/3D graphics \(WebGL\) couldn't start on this computer/.test(chat3d), 'user told it is a graphics problem, not a game bug')
+    check(/Added assets: Wooden Crate 01, Kloofendal 48d Partly Cloudy \(Pure Sky\)/.test(chat3d), 'reply lists added assets by name')
+    const sysPrompt = requests.at(-1).messages[0].content
+    check(/Barrel 03 \[models\] assets\/models\/barrel_03\/barrel_03\.gltf/.test(sysPrompt), 'system prompt lists assets already in the game')
+    const apiCalls = polyhaven.state.requests.filter((r) => !r.url.startsWith('/cdn/'))
+    check(apiCalls.length > 5 && apiCalls.every((r) => /^Gamesmith\//.test(r.ua || '')), `all ${apiCalls.length} Poly Haven API/download requests sent the Gamesmith User-Agent`)
+    await js(`document.querySelector('.game-tab').click()`)
+    await shot('18-ai-added-assets')
+    const errs = await js(`(() => { document.querySelector('.console-toggle').click(); return new Promise(r => setTimeout(() => r([...document.querySelectorAll('.log.error')].map(e => e.textContent.slice(0, 160))), 300)) })()`)
+    if (process.env.SHOW_ERRORS) console.log('PREVIEW ERRORS:\n  ' + errs.join('\n  '))
+
+    // ---- Bring in an existing game with its own server ----
+    if (process.env.SC_REPO) {
+      await js(`document.querySelector('.back').click()`)
+      await waitFor('.project-card.import')
+      await js(`document.querySelector('.project-card.import').click()`)
+      await waitFor('.repo-pick li, .modal.wide')
+      await sleep(600)
+      const listed = await js(`[...document.querySelectorAll('.repo-row strong')].map(e => e.textContent)`)
+      await shot('19-import-dialog')
+      await setInput('.modal.wide input', 'Guinnessstache/shattered-crown')
+      await js(`[...document.querySelectorAll('.modal.wide .btn.play')].find(b => b.textContent === 'Import').click()`)
+      check(await waitFor('.workspace iframe', 60000), 'imported game opens in the workspace')
+      const title = await js(`document.querySelector('.ws-name').textContent + ' | ' + document.querySelector('.ws-title .muted').textContent`)
+      check(title === 'Shattered Crown | Three.js, own server', `detected as a Three.js game with its own server (${title})`)
+      const running = await (async () => {
+        for (let i = 0; i < 240; i++) {
+          const t = await js(`document.querySelector('.server-chip')?.textContent || ''`)
+          if (/Server running/.test(t)) return true
+          if (/Server stopped/.test(t)) return false
+          await sleep(500)
+        }
+        return false
+      })()
+      check(running, 'Gamesmith installed packages and started the game server')
+      await sleep(2500)
+      const frameSrc = await js(`document.querySelector('.stage iframe').src`)
+      const fr = await fetch(frameSrc)
+      const framePage = fr.status + ' ' + (await fr.text()).includes('importmap')
+      check(framePage === '200 true', 'preview shows the game served by its own server')
+      await js(`document.querySelector('.console-toggle').click()`)
+      await sleep(400)
+      const serverLines = await js(`[...document.querySelectorAll('.log.server')].map(e => e.textContent).join('\\n')`)
+      check(/Saves: .*db\.json/.test(serverLines), 'server output shows in the console')
+      await shot('20-imported-server-game')
+      await js(`document.querySelector('.btn.play').click()`) // Publish
+      await waitFor('.publish')
+      await sleep(800)
+      const pubText = await js(`document.querySelector('.publish').innerText`)
+      check(/Saved on GitHub/.test(pubText) && /Guinnessstache\/shattered-crown/.test(pubText), 'imported repo already linked for Save to GitHub')
+      check(/Not available for this game/.test(pubText), 'GitHub Pages correctly unavailable for a server game')
+      await shot('21-imported-publish')
+      await js(`document.querySelector('.publish-head .btn').click()`)
+      await js(`document.querySelector('.back').click()`)
+      await waitFor('.project-card:not(.new)')
+      const cards = await js(`[...document.querySelectorAll('.project-card .project-sub')].map(e => e.textContent).join(' / ')`)
+      check(/with its own server/.test(cards), 'home screen lists the imported game')
+    }
   } catch (e) {
     console.error('SMOKE ERROR', e)
     failures++

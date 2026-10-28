@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
-export default function Preview({ url }) {
+const SERVER_LABEL = { installing: 'Installing packages…', starting: 'Starting server…', running: 'Server running', crashed: 'Server stopped', stopped: 'Server stopped' }
+
+export default function Preview({ url, serverGame = false, initialServer = null }) {
+  const [server, setServer] = useState(initialServer)
+  useEffect(() => {
+    if (!serverGame) return
+    return window.gs.preview.onServerStatus(setServer)
+  }, [serverGame])
   const [entries, setEntries] = useState([])
   const [consoleOpen, setConsoleOpen] = useState(false)
   const [reloadedAt, setReloadedAt] = useState(Date.now())
@@ -10,7 +17,7 @@ export default function Preview({ url }) {
   useEffect(() => {
     const offC = window.gs.preview.onConsole((e) => setEntries((xs) => [...xs.slice(-299), e]))
     const offR = window.gs.preview.onReloading(() => {
-      setEntries([])
+      setEntries((xs) => xs.filter((e) => e.server).slice(-80))
       setReloadedAt(Date.now())
     })
     return () => {
@@ -36,6 +43,13 @@ export default function Preview({ url }) {
           Focus game
         </button>
         <button className="btn ghost small" onClick={() => window.gs.preview.openExternal()}>Open in browser</button>
+        {serverGame && (
+          <div className={`server-chip ${server?.state || 'starting'}`} title={server?.detail || ''}>
+            <span className="dot" aria-hidden />
+            {SERVER_LABEL[server?.state] || 'Starting server…'}
+            <button className="btn tiny ghost" onClick={() => window.gs.preview.restartServer()}>Restart server</button>
+          </div>
+        )}
         <div className="spacer" />
         <button className={`console-toggle ${errors ? 'has-errors' : ''}`} onClick={() => setConsoleOpen((o) => !o)}>
           Console
@@ -51,7 +65,7 @@ export default function Preview({ url }) {
         <div className="console" ref={listRef}>
           {!entries.length && <div className="muted small pad">Nothing logged since the game started {Math.round((Date.now() - reloadedAt) / 1000)}s ago.</div>}
           {entries.map((e, i) => (
-            <pre key={i} className={`log ${e.level}`}>{e.text}</pre>
+            <pre key={i} className={`log ${e.level} ${e.server ? 'server' : ''}`}>{e.server && <span className="log-src">server</span>}{e.text}</pre>
           ))}
         </div>
       )}

@@ -1,17 +1,21 @@
 {
   "name": "gamesmith",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Build web games with local AI, save to GitHub, deploy to the web",
   "main": "out/main/index.js",
   "scripts": {
-    "postinstall": "node scripts/vendor.mjs",
+    "postinstall": "node scripts/postinstall.mjs",
     "vendor": "node scripts/vendor.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder --win",
     "test:agent": "node scripts/test-agent.mjs",
-    "test:github": "node scripts/test-github.mjs"
+    "test:github": "node scripts/test-github.mjs",
+    "test:assets": "node scripts/test-assets.mjs",
+    "test": "node scripts/test-agent.mjs && node scripts/test-assets.mjs && node scripts/test-github.mjs && node scripts/test-secrets.mjs && node scripts/test-import.mjs",
+    "test:secrets": "node scripts/test-secrets.mjs",
+    "test:import": "node scripts/test-import.mjs"
   },
   "author": "Jason Thistle",
   "license": "MIT",
@@ -30,6 +34,7 @@
     "vite": "^8.3.5"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "isomorphic-git": "^1.44.5",
     "ws": "^8.22.0"
   },
@@ -58,5 +63,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "overrides": {
+    "dompurify": "^3.4.17"
   }
 }

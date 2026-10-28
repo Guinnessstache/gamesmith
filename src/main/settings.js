@@ -26,6 +26,7 @@ const DEFAULTS = {
     requestTimeoutSec: 600
   },
   projectsDir: '',
+  externalProjects: [], // game folders opened from elsewhere on this computer
   // Client ID of a GitHub OAuth App with Device Flow enabled. Public value, not a secret.
   github: { clientId: '' }
 }

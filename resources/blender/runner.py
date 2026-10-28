@@ -50,6 +50,30 @@ def mat(name, color=(0.8, 0.8, 0.8), roughness=0.6, metallic=0.0, emission=None)
     return m
 
 
+ASSET_DIR = ""
+
+
+def asset_file(name):
+    """A file saved next to this model's script (for example face.png)."""
+    path = os.path.join(ASSET_DIR, name)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f'asset_file("{name}"): there is no {name} in this model\'s folder.')
+    return path
+
+
+def photo(name, path, roughness=0.8):
+    """A material that shows an image (a photo of a face, a sign, a label). Use on a plane."""
+    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes = True
+    nodes = m.node_tree.nodes
+    bsdf = nodes.get("Principled BSDF")
+    tex = nodes.new("ShaderNodeTexImage")
+    tex.image = bpy.data.images.load(path, check_existing=True)
+    m.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = roughness
+    return m
+
+
 def assign(obj, material):
     """Give an object a material (replacing any it had)."""
     obj.data.materials.clear()
@@ -98,26 +122,44 @@ class Rig:
 
     # --- a standard person-shaped skeleton (needed for recorded motions) ---
     @classmethod
-    def humanoid(cls, height=1.8, name="Rig"):
+    def humanoid(cls, height=1.8, name="Rig", shoulders=None, hips=None, upper_arm=None, forearm=None, thigh=None, shin=None, hand=None):
         """A person-shaped skeleton standing on the ground, facing -Y, arms down at the sides.
         Bones: Hips, Spine, Chest, Neck, Head, UpperArm/LowerArm/Hand .L/.R, UpperLeg/LowerLeg/Foot .L/.R
-        (.L is the character's left, at +X). rig.joints["LowerArm.L"] gives (head, tail) positions."""
+        (.L is the character's left, at +X). rig.joints["LowerArm.L"] gives (head, tail) positions.
+        Optional body measurements in meters (shoulder-joint width, hip-joint width, segment lengths);
+        anything left out uses average proportions for the height."""
         rig = cls(name)
-        k = height / 1.8
-        v = lambda x, y, z: (x * k, y * k, z * k)
-        rig.bone("Hips", v(0, 0, 0.95), v(0, 0, 1.05))
-        rig.bone("Spine", v(0, 0, 1.05), v(0, 0, 1.25), parent="Hips")
-        rig.bone("Chest", v(0, 0, 1.25), v(0, 0, 1.45), parent="Spine")
-        rig.bone("Neck", v(0, 0, 1.45), v(0, 0, 1.55), parent="Chest")
-        rig.bone("Head", v(0, 0, 1.55), v(0, 0, 1.8), parent="Neck")
+        H = float(height)
+        sh_w = shoulders or 0.222 * H
+        hip_w = hips or 0.111 * H
+        ua = upper_arm or 0.161 * H
+        fa = forearm or 0.139 * H
+        hd = hand or 0.056 * H
+        th = thigh or 0.239 * H
+        sn = shin or 0.239 * H
+        ankle = 0.05 * H
+        knee = ankle + sn
+        hip = knee + th
+        sh = max(hip + 0.2 * H, H - 0.211 * H)   # shoulders: the head and neck take the top ~21%
+        neck = sh + 0.017 * H
+        neck_top = neck + 0.056 * H
+        torso = neck - hip
+        rig.bone("Hips", (0, 0, hip), (0, 0, hip + 0.18 * torso))
+        rig.bone("Spine", (0, 0, hip + 0.18 * torso), (0, 0, hip + 0.55 * torso), parent="Hips")
+        rig.bone("Chest", (0, 0, hip + 0.55 * torso), (0, 0, neck), parent="Spine")
+        rig.bone("Neck", (0, 0, neck), (0, 0, neck_top), parent="Chest")
+        rig.bone("Head", (0, 0, neck_top), (0, 0, H), parent="Neck")
         for side, sx in (("L", 1), ("R", -1)):
-            rig.bone(f"UpperArm.{side}", v(0.19 * sx, 0, 1.42), v(0.2 * sx, 0, 1.13), parent="Chest")
-            rig.bone(f"LowerArm.{side}", v(0.2 * sx, 0, 1.13), v(0.21 * sx, 0, 0.88), parent=f"UpperArm.{side}")
-            rig.bone(f"Hand.{side}", v(0.21 * sx, 0, 0.88), v(0.21 * sx, 0, 0.78), parent=f"LowerArm.{side}")
-            rig.bone(f"UpperLeg.{side}", v(0.1 * sx, 0, 0.95), v(0.1 * sx, 0, 0.52), parent="Hips")
-            rig.bone(f"LowerLeg.{side}", v(0.1 * sx, 0, 0.52), v(0.1 * sx, 0.02, 0.09), parent=f"UpperLeg.{side}")
-            rig.bone(f"Foot.{side}", v(0.1 * sx, 0.02, 0.09), v(0.1 * sx, -0.12, 0.02), parent=f"LowerLeg.{side}")
+            x_sh = sh_w / 2 * sx
+            rig.bone(f"UpperArm.{side}", (x_sh, 0, sh), (x_sh + 0.005 * H * sx, 0, sh - ua), parent="Chest")
+            rig.bone(f"LowerArm.{side}", (x_sh + 0.005 * H * sx, 0, sh - ua), (x_sh + 0.011 * H * sx, 0, sh - ua - fa), parent=f"UpperArm.{side}")
+            rig.bone(f"Hand.{side}", (x_sh + 0.011 * H * sx, 0, sh - ua - fa), (x_sh + 0.011 * H * sx, 0, sh - ua - fa - hd), parent=f"LowerArm.{side}")
+            x_hip = hip_w / 2 * sx
+            rig.bone(f"UpperLeg.{side}", (x_hip, 0, hip), (x_hip, 0, knee), parent="Hips")
+            rig.bone(f"LowerLeg.{side}", (x_hip, 0, knee), (x_hip, 0.011 * H, ankle), parent=f"UpperLeg.{side}")
+            rig.bone(f"Foot.{side}", (x_hip, 0.011 * H, ankle), (x_hip, -0.067 * H, 0.011 * H), parent=f"LowerLeg.{side}")
         rig.is_humanoid = True
+        rig.height = H
         return rig
 
     @property
@@ -425,7 +467,7 @@ def clips_info():
     ]
 
 
-HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS, "Matrix": Matrix, "Quaternion": Quaternion, "Euler": Euler, "LM": LM, "motions_dir": motions_dir}
+HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS, "Matrix": Matrix, "Quaternion": Quaternion, "Euler": Euler, "LM": LM, "motions_dir": motions_dir, "asset_file": asset_file, "photo": photo}
 
 
 # ---------- measuring ----------
@@ -531,6 +573,8 @@ def main():
     try:
         bpy.ops.wm.read_factory_settings(use_empty=True)
         bpy.context.scene.render.fps = FPS
+        global ASSET_DIR
+        ASSET_DIR = os.path.dirname(script)
         with open(script, "r", encoding="utf-8") as f:
             code = f.read()
         ns = dict(HELPERS)

@@ -678,6 +678,11 @@ handle('motions:remove', async (id) => {
   await library.removeMotion(id)
   send('library:changed', {})
 })
+handle('library:createPerson', async (person, faceBytes) => {
+  const meta = await library.createPerson(person, faceBytes)
+  send('library:changed', { id: meta.id })
+  return meta.id
+})
 handle('motions:pickVideo', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Choose a video of the move',

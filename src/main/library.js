@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import { join, resolve, relative, sep } from 'node:path'
 import * as localGit from './git.js'
 import * as blender from './blender.js'
+import { personScript } from './person.js'
 import * as github from './github.js'
 import git from 'isomorphic-git'
 import http from 'isomorphic-git/http/node'
@@ -317,7 +318,12 @@ export async function saveMotion(data, video) {
   )
   fs.writeFileSync(
     motionPath(id, 'motion.json'),
-    JSON.stringify({ name, fps: data.fps, loop: !!data.loop, legLength: round(data.legLength || 0.85), source: data.source || 'video', created: new Date().toISOString(), frames })
+    JSON.stringify({
+      name, fps: data.fps, loop: !!data.loop, legLength: round(data.legLength || 0.85), source: data.source || 'video', created: new Date().toISOString(),
+      // where in the saved video these frames start, and whether left/right were swapped (to find colors later)
+      videoStart: round(data.videoStart || 0), mirrored: !!data.mirrored,
+      frames
+    })
   )
   if (video?.bytes) fs.writeFileSync(motionPath(id, `video.${video.ext || 'webm'}`), Buffer.from(video.bytes))
   await localGit.commitAll(root, `Recorded motion: ${name}`)
@@ -334,4 +340,14 @@ export async function renameMotion(id, name) {
 export async function removeMotion(id) {
   fs.rmSync(motionPath(id), { recursive: true, force: true })
   await localGit.commitAll(root, `Removed motion ${id}`)
+}
+
+/** "Make a character that looks like me": a new model with a generated script (and face.png). */
+export async function createPerson(person, faceBytes) {
+  const meta = await create(person.name || 'Me', `Made from the recording "${person.from}"`)
+  if (person.face && faceBytes) fs.writeFileSync(safe(meta.id, 'face.png'), Buffer.from(faceBytes))
+  writeScript(meta.id, personScript({ ...person, face: !!(person.face && faceBytes) }))
+  writeMeta(meta.id, { ...readMeta(meta.id), person: { from: person.from, height: person.body.height } })
+  await localGit.commitAll(root, `New character from the recording "${person.from}"`)
+  return readMeta(meta.id)
 }

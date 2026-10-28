@@ -415,3 +415,21 @@ a { color: var(--cyan); }
 .update-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .update-actions { display: flex; gap: 8px; }
 .update-notes { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font: 12.5px/1.45 var(--ui); color: var(--muted); background: var(--ink); border-radius: 8px; padding: 8px; }
+
+/* Make a character that looks like me */
+.make-me-stage { display: flex; align-items: center; justify-content: center; position: relative; background: #11161f; }
+.make-me-shot { max-width: 100%; max-height: 100%; object-fit: contain; }
+.make-me-note { position: absolute; inset: auto 16px 16px 16px; padding: 10px 12px; border-radius: 8px; background: rgba(10, 14, 20, 0.85); font-size: 13px; }
+.mm-error { color: #ffb3b3; }
+.mm-row { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.mm-row .num { width: 64px; }
+.mm-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
+.swatch input[type='color'] { width: 40px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; }
+.make-me-face { display: flex; align-items: center; gap: 10px; }
+.make-me-face canvas { width: 64px; height: 64px; border-radius: 8px; border: 1px solid var(--line); }
+.make-me-face[hidden] { display: none; }
+.make-me .field-row .field { flex: 1; min-width: 70px; }
+.mm-check input { width: auto; margin: 0; }
+.make-me-face .mm-check { flex: 1; }

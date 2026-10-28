@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('gs', {
     clearChat: (id) => call('library:clearChat', id),
     addToGame: (id) => call('library:addToGame', id),
     connectGitHub: (opts) => call('library:connectGitHub', opts),
+    createPerson: (person, face) => call('library:createPerson', person, face),
     sync: () => call('library:sync'),
     onChanged: (fn) => on('library:changed', fn)
   },

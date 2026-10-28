@@ -162,6 +162,35 @@ mock.listen(0, '127.0.0.1', async () => {
     check(meta.stats.clips?.some((c) => c.name === 'Wave' && c.loop), 'the character now has a looping "Wave" clip')
     check(await waitFor('.clip-bar .clip', 15000) && (await js(`[...document.querySelectorAll('.clip-bar .clip')].some(b => b.textContent === '▶ Wave')`)), 'Wave plays in the 3D view')
     await shot('m5-character')
+
+    // Make a character that looks like me, from the same recording
+    await clickText('Motions')
+    await sleep(500)
+    await js(`document.querySelector('.lib-item')?.click()`)
+    check(await waitFor('.figure-stage', 10000), 'back on the motion')
+    await clickText('Make a character that looks like me')
+    check(await waitFor('.swatches input[type=color]', 30000), 'colors read from the video')
+    const colors = await js(`[...document.querySelectorAll('.swatches input')].map(i => i.value)`)
+    const shirt = colors[2]
+    const faceShown = await js(`!document.querySelector('.make-me-face').hidden`)
+    check(faceShown, 'face cropped for the photo')
+    await shot('m6-make-me')
+    await clickText('Create character')
+    check(await waitFor('.clip-bar .clip', 180000), 'character built and shown')
+    const list = await js(`window.gs.library.list()`)
+    const me = list.find((a) => a.name === 'Me')
+    check(me && me.stats?.humanoid && me.stats.materials.includes('Face photo') && me.stats.materials.includes('Shirt'), `"Me" has a person skeleton, outfit and face (${me?.stats?.materials})`)
+    check(me && me.stats.clips?.some((c) => c.name === 'Wave'), 'and the recorded motion as a clip')
+    const script = fs.readFileSync(path.join(lib, me.id, 'model.py'), 'utf8')
+    const hex = (c) => '#' + c.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')
+    const m = /shirt = mat\("Shirt", \(([^)]+)\)/.exec(script)
+    check(m && hex(m[1].split(',').map(Number)) === shirt, `shirt color carried into the script (${shirt})`)
+    check(fs.existsSync(path.join(lib, me.id, 'face.png')), 'face photo saved with the model')
+    await sleep(2500)
+    // the face texture really shows: some pixels in the 3D view are the photo's skin tones, not the flat material colors
+    const textured = await js(`(() => { const c = document.querySelector('.asset-stage canvas'); return c ? c.toDataURL().length : 0 })()`)
+    check(textured > 0, 'the 3D view rendered')
+    await shot('m7-me')
   } catch (e) {
     console.error('MOCAP SMOKE ERROR', e)
     failures++

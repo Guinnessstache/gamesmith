@@ -5,6 +5,7 @@ const FPS = 24 // must match mocap/tracker.js
 // The tracker (MediaPipe) loads only when you track a video, so the rest of the app never depends on it.
 const loadTracker = () => import('../mocap/tracker.js')
 import { processMotion, LM } from '../mocap/process.js'
+import { MakeMe } from './MakeMe.jsx'
 
 const RECORD_MAX = 15 // seconds
 const SMOOTHING = { Low: 3, Medium: 5, High: 9 }
@@ -345,7 +346,7 @@ function Review({ raw, video, onRedo, onSaved }) {
       const out = processMotion(raw.frames, { fps: raw.fps, start, end, mirror, smoothing: SMOOTHING[smoothing], loop })
       if (out.frames.length < 2) throw new Error('Nothing left after trimming. Widen the start and end.')
       const saved = await window.gs.motions.save(
-        { name: name.trim(), fps: raw.fps, loop, legLength: out.legLength, frames: out.frames, source: video?.ext === 'webm' && !video?.name ? 'webcam' : 'video' },
+        { name: name.trim(), fps: raw.fps, loop, legLength: out.legLength, frames: out.frames, source: video?.ext === 'webm' && !video?.name ? 'webcam' : 'video', videoStart: Math.floor(start * raw.fps) / raw.fps, mirrored: mirror },
         video?.bytes ? { bytes: video.bytes, ext: video.ext } : null
       )
       onSaved(saved)
@@ -476,6 +477,7 @@ function MotionDetail({ motion, studio, onChanged, onDeleted }) {
   const models = studio.list || []
   const [target, setTarget] = useState(() => models.find((a) => a.stats?.humanoid)?.id || models[0]?.id || '')
   const [msg, setMsg] = useState('')
+  const [makeMe, setMakeMe] = useState(false)
 
   useEffect(() => {
     if (!showVideo || videoUrl || !motion.video) return
@@ -505,6 +507,14 @@ function MotionDetail({ motion, studio, onChanged, onDeleted }) {
     await window.gs.motions.remove(motion.id)
     onDeleted()
     onChanged()
+  }
+
+  if (makeMe) {
+    return (
+      <div className="asset-view">
+        <MakeMe motion={motion} data={data} studio={studio} onClose={() => setMakeMe(false)} />
+      </div>
+    )
   }
 
   return (
@@ -544,6 +554,9 @@ function MotionDetail({ motion, studio, onChanged, onDeleted }) {
           <button className="btn play" onClick={useOn} disabled={!target}>Add to character</button>
           <p className="small muted">The modeling AI adds it as a clip; you'll see it in that model's 3D view. Characters need a person-shaped skeleton, and the AI adds one if they don't have it.</p>
           {msg && <div className="small">{msg}</div>}
+          <button className="btn" onClick={() => setMakeMe(true)} disabled={!motion.video || !data} title={motion.video ? '' : 'Needs the video, which is only on the computer that recorded it'}>
+            Make a character that looks like me
+          </button>
           <div className="detail-actions">
             <button className="btn small ghost" onClick={rename}>Rename</button>
             <button className="btn small ghost danger" onClick={remove}>Delete</button>

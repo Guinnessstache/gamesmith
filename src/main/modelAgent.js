@@ -85,6 +85,9 @@ which recorded motions need:
   rig.limb("LowerLeg.R", width=0.11, material=dark, shape="cylinder", extend=0.02)
   head_pos, tail_pos = rig.joints["Head"]                    # place other parts (helmet, sword...) and rig.attach(part, "Hand.R")
 .L is the character's left (+X). It stands on z = 0 facing -Y with arms down. Build every body part this way, then add clips.
+Characters made from a recording ("a character that looks like me") pass the person's measurements to Rig.humanoid
+and may show a photo: photo("Face photo", asset_file("face.png")) is an image material for a plane. Keep those
+measurements, colors and the face plane unless the user asks to change them.
 ${motionList()}
 
 Work in small steps: change the script, call build_model, read the numbers (is the size right? is min_z 0?), then improve.

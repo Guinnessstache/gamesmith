@@ -193,6 +193,33 @@ ok(/GLTFLoader/.test(assets.usageHint(rec, 'three-3d')) && /0\.82/.test(assets.u
   ok(library.listMotions().length === 1 && library.list().every((a) => a.id !== 'motions'), 'motions listed separately from models')
   const files = await (await import('isomorphic-git')).default.listFiles({ fs, dir: library.dir() })
   ok(files.includes('motions/wave/motion.json') && !files.some((f) => f.startsWith('motions/wave/video')), 'the motion is versioned (and backed up), the video of you stays on this computer')
+
+  // "Make a character that looks like me": generated script with your measurements, colors and face
+  const zlib = await import('node:zlib')
+  const png = (w, h, rgb) => {
+    const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0 })
+    const crc = (b) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0 }
+    const chunk = (t, d) => { const len = Buffer.alloc(4); len.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]) }
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2
+    const raw = Buffer.concat(Array.from({ length: h }, () => Buffer.from([0, ...Array.from({ length: w }, () => rgb).flat()])))
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+  }
+  const body = { height: 1.75, shoulders: 0.42, hips: 0.2, upper_arm: 0.29, forearm: 0.25, thigh: 0.43, shin: 0.41, head_width: 0.22 }
+  const person = { name: 'Me', from: 'Wave', body, colors: { skin: [0.8, 0.6, 0.5], hair: [0.2, 0.1, 0.05], shirt: [0.1, 0.5, 0.2], pants: [0.1, 0.1, 0.4], shoes: [0.9, 0.9, 0.9] }, sleeves: 'short', legs: 'shorts', hairStyle: 'short', face: true, motion: saved.id }
+  const meId = (await library.createPerson(person, png(8, 8, [200, 150, 120]))).id
+  ok(fs.existsSync(join(library.dir(), meId, 'face.png')) && /photo\("Face photo", asset_file\("face.png"\)\)/.test(library.readScript(meId)), 'character saved with your face photo and an editable script')
+  const me = await library.build(meId, { blenderPath: exe, runner })
+  ok(me.ok && me.stats.humanoid, `your character builds on a person-shaped skeleton${me.ok ? '' : ': ' + me.error}`)
+  ok(me.ok && ['Skin', 'Hair', 'Shirt', 'Pants', 'Shoes', 'Face photo'].every((m) => me.stats.materials.includes(m)), `outfit colors and the face photo are materials (${me.stats?.materials})`)
+  ok(me.ok && (me.stats.clips || []).some((c) => c.name === 'Wave'), 'the motion you recorded comes with it')
+  const meBytes = library.files(meId)['model.glb']
+  const meJson = JSON.parse(meBytes.subarray(20, 20 + meBytes.readUInt32LE(12)).toString('utf8')) // the .glb's JSON chunk
+  ok(meJson.images?.length === 1 && meJson.images[0].bufferView !== undefined, 'the face photo is packed inside the .glb')
+  const plain = await library.createPerson({ ...person, name: 'Plain', face: false, hairStyle: 'none', sleeves: 'long', legs: 'long', motion: '' }, null)
+  const pb = await library.build(plain.id, { blenderPath: exe, runner })
+  ok(pb.ok && Math.abs(pb.stats.size_m.height - 1.75) < 0.08 && pb.stats.min_z > -0.02, `it's as tall as you (${pb.stats?.size_m?.height} m, feet at ${pb.stats?.min_z})`)
+  ok(pb.ok && !pb.stats.materials.includes('Face photo') && !pb.stats.clips?.length, 'without a face photo or motion it still builds')
+
   await library.removeMotion(saved.id)
   ok(library.listMotions().length === 0, 'motion removed')
 }

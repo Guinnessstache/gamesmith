@@ -6,13 +6,15 @@ import http from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const { createProject } = await import(join(root, 'src/main/projects.js'))
-const { runAgent, applyEdit } = await import(join(root, 'src/main/agent.js'))
-const git = await import(join(root, 'src/main/git.js'))
+// Windows needs file:// URLs for dynamic import of absolute paths.
+const fileHref = (...parts) => pathToFileURL(join(...parts)).href
+const { createProject } = await import(fileHref(root, 'src/main/projects.js'))
+const { runAgent, applyEdit } = await import(fileHref(root, 'src/main/agent.js'))
+const git = await import(fileHref(root, 'src/main/git.js'))
 
 // ---- unit checks for the edit matcher ----
 assert.equal(applyEdit('a\r\nb\r\nc', 'a\nb', 'X').content, 'X\r\nc')

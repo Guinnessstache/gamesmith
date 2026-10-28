@@ -7,18 +7,20 @@ import http from 'node:http'
 import fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// Windows needs file:// URLs for dynamic import of absolute paths.
+const fileHref = (...parts) => pathToFileURL(join(...parts)).href
 process.env.GAMESMITH_BLENDER ||= join(root, 'scripts', 'fake-blender.py')
 process.env.GAMESMITH_POLYHAVEN_API = 'http://127.0.0.1:9' // offline: only the user's library answers
-const blender = await import(join(root, 'src/main/blender.js'))
-const library = await import(join(root, 'src/main/library.js'))
-const { runModelAgent, formatBuild } = await import(join(root, 'src/main/modelAgent.js'))
-const assets = await import(join(root, 'src/main/assets.js'))
-const { createProject } = await import(join(root, 'src/main/projects.js'))
-const git = await import(join(root, 'src/main/git.js'))
+const blender = await import(fileHref(root, 'src/main/blender.js'))
+const library = await import(fileHref(root, 'src/main/library.js'))
+const { runModelAgent, formatBuild } = await import(fileHref(root, 'src/main/modelAgent.js'))
+const assets = await import(fileHref(root, 'src/main/assets.js'))
+const { createProject } = await import(fileHref(root, 'src/main/projects.js'))
+const git = await import(fileHref(root, 'src/main/git.js'))
 const runner = join(root, 'resources', 'blender', 'runner.py')
 
 let passed = 0

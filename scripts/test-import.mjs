@@ -8,15 +8,17 @@ import { spawn, execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import git from 'isomorphic-git'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const importer = await import(join(root, 'src/main/importer.js'))
-const { GameServer } = await import(join(root, 'src/main/gameServer.js'))
-const { PreviewServer } = await import(join(root, 'src/main/previewServer.js'))
+// Windows needs file:// URLs for dynamic import of absolute paths.
+const fileHref = (...parts) => pathToFileURL(join(...parts)).href
+const importer = await import(fileHref(root, 'src/main/importer.js'))
+const { GameServer } = await import(fileHref(root, 'src/main/gameServer.js'))
+const { PreviewServer } = await import(fileHref(root, 'src/main/previewServer.js'))
 const { WebSocket } = await import('ws')
 const realRepo = process.argv[2]
 const tmp = mkdtempSync(join(tmpdir(), 'gs-import-'))
@@ -63,7 +65,7 @@ console.log('PASS  detection: static root/docs, Vite dev server, engine guess, u
   assert.match(readFileSync(join(d, '.git/info/exclude'), 'utf8'), /^\.gamesmith\/$/m, '.gamesmith hidden via info/exclude')
   assert.ok(!existsSync(join(d, '.gitignore')), "the game's own .gitignore is untouched")
   // a real edit (same size, same second) is still saved by Gamesmith's commit
-  const localGit = await import(join(root, 'src/main/git.js'))
+  const localGit = await import(fileHref(root, 'src/main/git.js'))
   writeFileSync(join(d, 'game.js'), 'let a = 1\r\nlet b = 3\r\n')
   const oid = await localGit.commitAll(d, 'edit')
   assert.ok(oid, 'real edit committed')
@@ -238,7 +240,7 @@ if (realRepo) {
     console.log('PASS  restart on server-code change; crash surfaces the SyntaxError to the AI; recovers after fix')
 
     // The AI on an existing codebase: prompt, search, sliced reads
-    const { runAgent } = await import(join(root, 'src/main/agent.js'))
+    const { runAgent } = await import(fileHref(root, 'src/main/agent.js'))
     const script = [
       { name: 'search_files', args: { query: 'startServer', path: 'server' } },
       { name: 'read_file', args: { path: 'server/index.js', start_line: 20, end_line: 40 } },

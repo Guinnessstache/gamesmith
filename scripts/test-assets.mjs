@@ -3,12 +3,14 @@
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
 import { zipSync, strToU8 } from 'fflate'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// Windows needs file:// URLs for dynamic import of absolute paths.
+const fileHref = (...parts) => pathToFileURL(join(...parts)).href
 const require = createRequire(import.meta.url)
 const { startMockPolyHaven, startMockPolyPizza } = require('./mock-polyhaven.cjs')
 const ph = await startMockPolyHaven()
@@ -16,8 +18,8 @@ process.env.GAMESMITH_POLYHAVEN_API = ph.base
 const ppMock = await startMockPolyPizza()
 process.env.GAMESMITH_POLYPIZZA_API = ppMock.api
 
-const assets = await import(join(root, 'src/main/assets.js'))
-const { createProject } = await import(join(root, 'src/main/projects.js'))
+const assets = await import(fileHref(root, 'src/main/assets.js'))
+const { createProject } = await import(fileHref(root, 'src/main/projects.js'))
 const tmp = mkdtempSync(join(tmpdir(), 'gs-assets-'))
 try {
   assets.configure({ cache: join(tmp, 'cache') })
@@ -101,7 +103,7 @@ try {
 
   // ---- Poly Pizza ----
   const pp = assets.polyPizza
-  const { createSecretStore } = await import(join(root, 'src/main/secretStore.js'))
+  const { createSecretStore } = await import(fileHref(root, 'src/main/secretStore.js'))
   const ppStore = createSecretStore({ file: join(tmp, 'pp.json'), fields: ['key'], available: async () => true, encrypt: async (t) => Buffer.from('e' + t), decrypt: async (b) => ({ result: b.toString().slice(1) }) })
   await ppStore.load()
   pp.configureKeyStore(ppStore)

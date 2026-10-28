@@ -2,11 +2,13 @@
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const { createSecretStore } = await import(join(root, 'src/main/secretStore.js'))
+// Windows needs file:// URLs for dynamic import of absolute paths.
+const fileHref = (...parts) => pathToFileURL(join(...parts)).href
+const { createSecretStore } = await import(fileHref(root, 'src/main/secretStore.js'))
 const tmp = mkdtempSync(join(tmpdir(), 'gs-secrets-'))
 const enc = (t) => 'enc:' + Buffer.from('K1:' + t).toString('base64')
 let rotate = false

@@ -8,10 +8,12 @@ const run = promisify(execFile)
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// Windows needs file:// URLs for dynamic import of absolute paths.
+const fileHref = (...parts) => pathToFileURL(join(...parts)).href
 const tmp = mkdtempSync(join(tmpdir(), 'gs-gh-'))
 const remoteRoot = join(tmp, 'remote')
 mkdirSync(remoteRoot)
@@ -120,11 +122,11 @@ port = server.address().port
 process.env.GAMESMITH_GITHUB_API = `http://127.0.0.1:${port}/api`
 process.env.GAMESMITH_RENDER_API = `http://127.0.0.1:${port}/render`
 
-const github = await import(join(root, 'src/main/github.js'))
-const { createSecretStore } = await import(join(root, 'src/main/secretStore.js'))
+const github = await import(fileHref(root, 'src/main/github.js'))
+const { createSecretStore } = await import(fileHref(root, 'src/main/secretStore.js'))
 const fakeCrypto = { available: async () => true, encrypt: async (t) => Buffer.from('x' + t), decrypt: async (b) => ({ result: b.toString().slice(1) }) }
-const deploy = await import(join(root, 'src/main/deploy.js'))
-const { createProject } = await import(join(root, 'src/main/projects.js'))
+const deploy = await import(fileHref(root, 'src/main/deploy.js'))
+const { createProject } = await import(fileHref(root, 'src/main/projects.js'))
 
 try {
   const ghStore = createSecretStore({ file: join(tmp, 'github.json'), fields: ['token'], ...fakeCrypto })

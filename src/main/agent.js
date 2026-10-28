@@ -20,7 +20,7 @@ const ENGINE_NOTES = {
 - Use Phaser 3 APIs only (this.physics.add.sprite, this.add.text, this.input.keyboard, this.tweens, etc.).`,
   'three-3d': `ENGINE: Three.js r186 (3D) via the import map in index.html.
 - Import with: import * as THREE from 'three'
-- Available addons ONLY: 'three/addons/controls/OrbitControls.js', 'three/addons/controls/PointerLockControls.js', 'three/addons/loaders/GLTFLoader.js', 'three/addons/utils/BufferGeometryUtils.js', 'three/addons/utils/SkeletonUtils.js'
+- Available addons ONLY: 'three/addons/controls/OrbitControls.js', 'three/addons/controls/PointerLockControls.js', 'three/addons/loaders/GLTFLoader.js', 'three/addons/loaders/HDRLoader.js', 'three/addons/environments/RoomEnvironment.js', 'three/addons/utils/BufferGeometryUtils.js', 'three/addons/utils/SkeletonUtils.js'
 - Use THREE.Timer (not THREE.Clock) for frame timing: timer.update() then timer.getDelta().`
 }
 
@@ -71,7 +71,11 @@ function importedPrompt(projectDir, meta) {
 
 PROJECT: "${meta.name}" (imported${meta.github ? ` from github.com/${meta.github.fullName}` : ''})
 ENGINE / LANGUAGE: ${meta.engine}
-HOW IT RUNS: ${how}
+HOW IT RUNS: ${how}${
+    meta.imported?.cdn?.length
+      ? `\nLIBRARIES: loaded from the internet (${meta.imported.cdn.join(', ')})${meta.imported.libraries?.length ? `, pinned to ${meta.imported.libraries.join(', ')}` : ''}. Keep using those exact URLs and versions (see the import map / script tags in index.html); don't switch versions or add a bundler. New addons come from the same CDN and version.`
+      : ''
+  }${meta.imported?.source === 'html' ? `\nORIGIN: started from a single HTML file the user brought in (${meta.imported.from}). It's the base for a new game: building new features on it is expected. Keep the existing files and structure; add new files (e.g. more .js modules) when a feature is big.` : ''}
 ${pkg ? `package.json scripts: ${JSON.stringify(pkg.scripts || {})}\ndependencies: ${Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }).join(', ') || 'none'}` : ''}
 
 RULES FOR AN EXISTING CODEBASE

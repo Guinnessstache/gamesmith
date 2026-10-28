@@ -37,7 +37,12 @@ export default function PublishPanel({ project, settings, onClose, onChanged }) 
   }, [load])
 
   // While a site is updating, refresh its status every few seconds.
-  const updating = st && ((st.pages && !['built', 'errored'].includes(st.pages.status)) || (st.render && /progress|created/.test(st.render.status || '')))
+  const updating =
+    st &&
+    ((st.pages && !['built', 'errored'].includes(st.pages.status)) ||
+      (st.render && /progress|created/.test(st.render.status || '')) ||
+      st.pages?.verify?.pending ||
+      st.render?.verify?.pending)
   useEffect(() => {
     if (!updating) return
     const t = setInterval(load, 5000)
@@ -118,7 +123,13 @@ function GitHubSection({ st, project, settings, busy, act, reload }) {
   if (!st.account) {
     return (
       <Step n={1} title="Connect GitHub">
-        <p className="muted">Your game's files are saved to a GitHub repository. That's also what the web hosts publish from.</p>
+        {st.authExpired ? (
+          <div className="notice error">
+            GitHub no longer accepts Gamesmith's saved sign-in (it expired or was revoked on github.com). Connect again below; your repository and live sites stay as they are.
+          </div>
+        ) : (
+          <p className="muted">Your game's files are saved to a GitHub repository. That's also what the web hosts publish from.</p>
+        )}
         {device ? (
           <div className="device-code">
             <span className="muted small">1. Your sign-in code (already copied):</span>
@@ -324,8 +335,10 @@ function WebSection({ st, busy, act, onRecheck }) {
 
 function SiteLink({ url, label, bad, error, verify, host, onRecheck }) {
   const [busy, setBusy] = useState(false)
-  const failing = verify?.failed?.length > 0
-  const shown = label === 'Live' && verify && !verify.error ? (failing ? 'Live, with problems' : 'Live') : label === 'Live' ? 'Checking files…' : label
+  const pending = !!verify?.pending
+  const failing = verify?.failed?.length > 0 && !pending
+  const shown =
+    label === 'Live' && verify && !verify.error ? (pending ? 'Updating…' : failing ? 'Live, with problems' : 'Live') : label === 'Live' ? 'Checking files…' : label
   const recheck = async () => {
     setBusy(true)
     try {
@@ -340,6 +353,11 @@ function SiteLink({ url, label, bad, error, verify, host, onRecheck }) {
       <a href={url} target="_blank" rel="noreferrer">{url}</a>
       {error && <span className="muted small">{error}</span>}
       {label === 'Live' && verify && !verify.error && !failing && <span className="muted small">All {verify.checked} files load.</span>}
+      {pending && (
+        <span className="muted small">
+          Your latest save is still going live ({verify.failed.length} new or changed file{verify.failed.length > 1 ? 's' : ''} not there yet). Checking again automatically; this usually takes a minute or two.
+        </span>
+      )}
       {failing && (
         <div className="verify-fail">
           <span className="small">
@@ -352,7 +370,7 @@ function SiteLink({ url, label, bad, error, verify, host, onRecheck }) {
             {verify.failed.length > 8 && <li>…and {verify.failed.length - 8} more</li>}
           </ul>
           <span className="muted small">
-            Right after a first deploy this usually clears within 5 minutes. If it doesn't, check the file names: the host's servers treat capital letters as different, Windows doesn't.
+            These files still don't load 10 minutes after saving. Check the file names: the host's servers treat capital letters as different, Windows doesn't. Also check the files aren't listed in .gitignore.
           </span>
           <button className="btn ghost small" onClick={recheck} disabled={busy}>{busy ? 'Checking…' : 'Recheck'}</button>
         </div>

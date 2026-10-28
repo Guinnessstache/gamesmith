@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 
 /**
  * Spin-around view of a .glb (bytes from the main process), with a 1 m grid so
@@ -31,6 +32,10 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
 
     const scene = new THREE.Scene()
     scene.background = new THREE.Color('#161c27')
+    // Soft studio reflections, so metal parts look like metal instead of black.
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    scene.environmentIntensity = 0.8
     const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 500)
     camera.position.set(2.2, 1.6, 2.6)
     const controls = new OrbitControls(camera, renderer.domElement)
@@ -69,6 +74,8 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
       cancelAnimationFrame(raf)
       ro.disconnect()
       controls.dispose()
+      scene.environment?.dispose()
+      pmrem.dispose()
       renderer.dispose()
       renderer.domElement.remove()
       ctx.current = null
@@ -105,7 +112,10 @@ export default function ModelViewer({ glb, fallback, wireframe = false }) {
         const center = box.getCenter(new THREE.Vector3())
         const radius = Math.max(size.length() / 2, 0.1)
         const dir = c.camera.position.clone().sub(c.controls.target).normalize()
-        const dist = radius / Math.sin(THREE.MathUtils.degToRad(c.camera.fov / 2)) * 1.15
+        // Fit both ways: a tall, narrow view needs the horizontal angle.
+        const vHalf = THREE.MathUtils.degToRad(c.camera.fov / 2)
+        const hHalf = Math.atan(Math.tan(vHalf) * c.camera.aspect)
+        const dist = (radius / Math.sin(Math.min(vHalf, hHalf))) * 1.1
         c.controls.target.copy(center)
         c.camera.position.copy(center).addScaledVector(dir, dist)
         c.camera.near = dist / 100

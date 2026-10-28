@@ -458,7 +458,7 @@ export function usageHint(record, template) {
       if (record.ownModel) {
         const sz = record.size_m ? ` Size: ${record.size_m.width} x ${record.size_m.depth} m, ${record.size_m.height} m tall.` : ''
         return three
-          ? `GLTFLoader from 'three/addons/loaders/GLTFLoader.js': new GLTFLoader().load('${record.entry}', (g) => scene.add(g.scene)). Made in the user's asset library: real-world meters, origin at the bottom center (sits on y = 0).${sz}`
+          ? `GLTFLoader from 'three/addons/loaders/GLTFLoader.js': new GLTFLoader().load('${record.entry}', (g) => scene.add(g.scene)). Made in the user's asset library: real-world meters, origin at the bottom center (sits on y = 0).${sz} Metal parts need reflections to look right: set scene.environment (e.g. RoomEnvironment from 'three/addons/environments/RoomEnvironment.js' through a PMREMGenerator) if the game doesn't have one.`
           : `3D model (.glb); not usable in a 2D Phaser game.`
       }
       if (record.lowPoly) {

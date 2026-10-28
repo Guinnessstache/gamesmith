@@ -10,6 +10,7 @@ export function useModelStudio() {
   const [list, setList] = useState(null)
   const [assetId, setAssetId] = useState(null)
   const [asset, setAsset] = useState(null)
+  const [pendingPrompt, setPendingPrompt] = useState(null) // { id, text }: send to the AI once the new asset is open
 
   const refreshList = useCallback(async () => {
     const l = await window.gs.library.list()
@@ -37,7 +38,7 @@ export function useModelStudio() {
     await Promise.all([refreshList(), refreshAsset(assetId)])
   }, [refreshList, refreshAsset, assetId])
 
-  return { blender, setBlender, list, assetId, select: setAssetId, asset, refresh, refreshList }
+  return { blender, setBlender, list, assetId, select: setAssetId, asset, refresh, refreshList, pendingPrompt, setPendingPrompt }
 }
 
 export default function BlenderStudio({ studio, project }) {
@@ -84,8 +85,9 @@ export default function BlenderStudio({ studio, project }) {
       {creating && (
         <NewAssetDialog
           onCancel={() => setCreating(false)}
-          onCreated={async (id) => {
+          onCreated={async (id, description) => {
             setCreating(false)
+            if (description) studio.setPendingPrompt({ id, text: description })
             await refreshList()
             select(id)
           }}
@@ -297,7 +299,7 @@ function NewAssetDialog({ onCancel, onCreated }) {
     e.preventDefault()
     setBusy(true)
     try {
-      onCreated(await window.gs.library.create(name.trim(), description.trim()))
+      onCreated(await window.gs.library.create(name.trim(), description.trim()), description.trim())
     } catch (e2) {
       setErr(e2.message)
       setBusy(false)
@@ -312,7 +314,7 @@ function NewAssetDialog({ onCancel, onCreated }) {
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Treasure chest" />
         </label>
         <label className="field">
-          <span>What should it look like? (optional, the AI reads this)</span>
+          <span>Describe it (the AI starts building as soon as you click Create)</span>
           <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Small wooden chest with gold trim and a curved lid, about knee high" />
         </label>
         {err && <div className="notice error">{err}</div>}

@@ -375,3 +375,7 @@ a { color: var(--cyan); }
 
 .ws-body.studio-page { grid-template-columns: minmax(0, 1fr) 400px; }
 .blender-setup .notice { margin-bottom: 0; }
+.busy-elsewhere { margin: 0 12px 8px; padding: 8px 12px; justify-content: space-between; }
+.ws-body.no-left { grid-template-columns: minmax(0, 1fr) 400px; }
+.left[hidden] { display: none; }
+.studio .asset-detail { width: 260px; }

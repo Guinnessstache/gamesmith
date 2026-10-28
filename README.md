@@ -1,5 +1,7 @@
 # Gamesmith
 
+**Website and download: https://guinnessstache.github.io/gamesmith/**
+
 Build browser games by describing them. Gamesmith is a desktop app (Electron) that pairs a live game preview and code editor with an AI agent running on your own model server, such as a Mac Studio on your network.
 
 **Version 0.5 (this build)**
@@ -37,6 +39,7 @@ Each model folder holds `asset.json`, `model.py`, `model.glb` and `preview.png`.
 On the home screen, click **Bring in a game**.
 
 - **From GitHub:** type `owner/name` or pick from your repositories (connect GitHub first to see private ones). Gamesmith clones it into your games folder, and **Save to GitHub** pushes back to the same repo.
+- **From a single HTML file:** a whole game in one `.html` file (like one an AI chat wrote) becomes a new game in your games folder. Gamesmith keeps the original file as the first version in History, then splits the inline CSS and JavaScript into `style.css` and `game.js` next to `index.html` so the AI can work on it piece by piece (the game behaves exactly the same). It tells you about files the page refers to that weren't included, and about libraries it loads from a CDN; the AI is told to keep those exact versions.
 - **From a folder:** opens the game where it is; nothing is copied. If the folder isn't a git repo yet, Gamesmith starts tracking it so Undo and History work. If it's a Windows checkout with converted line endings, Gamesmith turns on `core.autocrlf` for that repo so files don't all look changed.
 
 Gamesmith's own data (chat, settings) lives in a hidden `.gamesmith/` folder that's excluded through `.git/info/exclude`; your `.gitignore` isn't touched.
@@ -82,11 +85,25 @@ npm run dev
 
 `npm install` also copies the Phaser and Three.js engine files into `resources/vendor`.
 
-To build a Windows installer into `release/`:
+To build the Windows installer (`release/Gamesmith-Setup.exe`) on your own PC:
 
 ```
 npm run dist
 ```
+
+### Releasing a new version
+
+GitHub builds the installer for you (`.github/workflows/release.yml`). Set `"version"` in `package.json`, commit and push, then push a tag with the same number:
+
+```
+git tag v0.5.0
+```
+
+```
+git push origin v0.5.0
+```
+
+About 10 minutes later the installer is on the [Releases page](https://github.com/Guinnessstache/gamesmith/releases), and the website's Download button points to it. The website itself is `docs/index.html`, published with GitHub Pages (Settings, Pages, branch `main`, folder `/docs`). Its screenshots come from `scripts/showcase-shots.cjs`.
 
 ## Connect the Mac Studio
 

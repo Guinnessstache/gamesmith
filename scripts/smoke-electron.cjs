@@ -47,8 +47,9 @@ const script = [
   { tool: { name: 'add_asset', args: { id: 'wooden_crate_01', type: 'models' } } },
   { tool: { name: 'add_asset', args: { id: 'kloofendal_48d_partly_cloudy_puresky', type: 'hdris' } } },
   { text: 'Added a wooden crate and a cloudy sky.' },
-  // Third request: the modeling AI in the Blender tab.
+  // Third request: the modeling AI in the Blender tab (slow first reply, to test leaving and coming back).
   {
+    delay: 4000,
     tool: {
       name: 'write_script',
       args: {
@@ -73,6 +74,7 @@ const mock = http.createServer((req, res) => {
   req.on('end', async () => {
     requests.push(JSON.parse(body))
     const step = script[turn++] || { text: 'Done.' }
+    if (step.delay) await new Promise((r) => setTimeout(r, step.delay))
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)
     if (step.tool) {
@@ -276,27 +278,27 @@ mock.listen(0, '127.0.0.1', async () => {
     })()
     check(renderShown, 'Render site link shown')
     check(services.state.render?.serviceDetails?.publishPath === './', 'Render static site created with publishPath ./')
-    // Pages: the stale 404 must be caught, then cleared by Recheck
-    const pagesProblem = await (async () => {
+    // Pages: a stale 404 right after saving is shown as "still going live" and rechecked automatically
+    const pagesPending = await (async () => {
       for (let i = 0; i < 60; i++) {
-        const t = await js(`document.querySelector('.verify-fail')?.innerText || ''`)
+        const t = await js(`[...document.querySelectorAll('.site .muted.small')].map(e => e.textContent).find(t => /still going live/.test(t)) || ''`)
         if (t) return t
         await sleep(250)
       }
       return ''
     })()
-    check(/1 of \d+ files don't load/.test(pagesProblem) && /src\/scenes\/GameScene\.js \(404\)/.test(pagesProblem), 'deploy check catches a file the live site 404s')
-    await shot('14a-verify-failed')
-    await js(`[...document.querySelectorAll('.verify-fail button')].find(b => b.textContent === 'Recheck').click()`)
+    check(/1 new or changed file not there yet/.test(pagesPending), 'a file missing right after saving is reported as still deploying, not as a problem')
+    check(!(await js(`!!document.querySelector('.verify-fail')`)), 'no error box while the new version is still going live')
+    await shot('14a-verify-pending')
     const allLive = await (async () => {
-      for (let i = 0; i < 80; i++) {
+      for (let i = 0; i < 160; i++) {
         const n = await js(`[...document.querySelectorAll('.site-state')].filter(e => e.textContent === 'Live').length`)
         if (n === 2) return true
         await sleep(250)
       }
       return false
     })()
-    check(allLive, 'both hosts show Live once every file loads')
+    check(allLive, 'both hosts turn Live on their own once every file loads')
     const allLoad = await js(`[...document.querySelectorAll('.site .muted.small')].map(e => e.textContent).filter(t => /^All [0-9]+ files load[.]$/.test(t)).length`)
     check(allLoad === 2, 'each host reports all files load')
     await shot('14-publish-live')
@@ -416,15 +418,23 @@ mock.listen(0, '127.0.0.1', async () => {
     await js(`document.querySelector('.lib-head .btn.play').click()`)
     await waitFor('.modal input')
     await setInput('.modal input', 'Treasure Chest')
+    await setInput('.modal textarea', 'A wooden treasure chest with a gold lid')
     await js(`document.querySelector('.modal .btn.play').click()`)
     check(await waitFor('.lib-item.on', 10000), 'new library asset created and selected')
     await sleep(500)
     const modelChatHead = await js(`document.querySelector('.right > .chat h2')?.textContent`)
     check(modelChatHead === 'Model with AI', 'right panel switches to the modeling chat')
-    await setInput('.right > .chat .chat-input textarea', 'A wooden treasure chest with a gold lid')
-    await js(`document.querySelector('.right > .chat .chat-input .btn.ai').click()`)
+    // The description from the New model dialog goes to the AI without retyping it.
+    // Leave the tab while it works and come back: the progress must still be there.
+    check(await waitFor('.right > .chat .msg.ai.live', 5000), 'AI starts on the new model by itself')
+    await js(`document.querySelector('.game-tab').click()`)
+    await sleep(600)
+    await js(`document.querySelector('.blender-tab').click()`)
+    check(await waitFor('.right > .chat .msg.ai.live .status', 3000), 'coming back to the tab shows the AI still working')
+    check(await js(`!!document.querySelector('.right > .chat .btn.stop')`), 'Stop button available after coming back')
     check(await waitFor('.right > .chat .msg.ai:not(.live) .msg-text', 120000), 'modeling AI finished')
     const modelReq = requests.at(-1)
+    check(modelReq.messages.find((m) => m.role === 'user')?.content === 'A wooden treasure chest with a gold lid', 'the description typed in New model was sent to the AI automatically')
     check(modelReq.tools.map((t) => t.function.name).join(',') === 'read_script,write_script,edit_script,build_model', 'modeling AI has the Blender tools')
     check(fs.existsSync(path.join(libDir, 'treasure-chest', 'model.glb')) && fs.existsSync(path.join(libDir, 'treasure-chest', 'preview.png')), 'Blender built model.glb and preview.png')
     check(await waitFor('.asset-detail .stats', 10000), 'measurements shown')
@@ -467,6 +477,25 @@ mock.listen(0, '127.0.0.1', async () => {
     await js(`document.querySelector('.studio-card').click()`)
     check(await waitFor('.lib-item', 10000), 'My 3D models opens from the home screen')
     await shot('27-studio-page')
+    await js(`document.querySelector('.back').click()`)
+    await waitFor('.project-card:not(.new)')
+
+    // ---- Start a new game from a single HTML file ----
+    const imported = await js(`window.gs.projects.importHtml(${JSON.stringify(path.join(__dirname, 'fixtures', 'one-file-game.html'))})`)
+    check(imported?.name === 'Dot Dodger' && imported.splitInto?.join(',') === 'style.css,game.js', 'one-file HTML game imported and split')
+    win.webContents.reload()
+    await waitFor('.project-card:not(.new)')
+    await openGame('Dot Dodger')
+    check(await waitFor('.workspace iframe', 20000), 'imported HTML game opens')
+    await sleep(2500)
+    const dotSrc = await js(`document.querySelector('.stage iframe').src`)
+    const [dotHtml, dotJs] = await Promise.all([fetch(dotSrc).then((r) => r.text()), fetch(new URL('game.js', dotSrc)).then((r) => r.status)])
+    check(/src="game.js"/.test(dotHtml) && dotJs === 200, 'preview serves the split game')
+    await js(`document.querySelector('.console-toggle').click()`)
+    await sleep(500)
+    const dotErrors = await js(`[...document.querySelectorAll('.log.error')].map(e => e.textContent)`)
+    check(dotErrors.every((t) => /logo\.png/.test(t)), `game runs; only the missing image is reported (${dotErrors.length} error lines)`)
+    await shot('28-html-import')
     await js(`document.querySelector('.back').click()`)
     await waitFor('.project-card:not(.new)')
 

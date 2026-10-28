@@ -27,7 +27,9 @@ export default function StudioPage({ settings, onClose, onOpenSettings }) {
           </div>
         </section>
         <aside className="right">
-          <ModelChat asset={studio.asset} settings={settings} blenderReady={!!studio.blender?.found} onOpenSettings={onOpenSettings} onRunFinished={studio.refresh} />
+          <ModelChat asset={studio.asset} settings={settings} blenderReady={!!studio.blender?.found} onOpenSettings={onOpenSettings} onRunFinished={studio.refresh}
+              autoPrompt={studio.pendingPrompt}
+              onAutoPromptUsed={() => studio.setPendingPrompt(null)} />
         </aside>
       </div>
     </div>

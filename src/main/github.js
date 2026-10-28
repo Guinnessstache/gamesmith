@@ -57,6 +57,26 @@ export async function api(path, { method = 'GET', body, token = getToken() } = {
   return json
 }
 
+/**
+ * Is the saved token still accepted? (Tokens expire or get revoked on github.com.)
+ * Cached for a minute so the Publish panel doesn't ask on every refresh.
+ */
+let tokenCheck = { token: null, at: 0, ok: true }
+export async function tokenWorks() {
+  const token = getToken()
+  if (!token) return false
+  if (tokenCheck.token === token && Date.now() - tokenCheck.at < 60000) return tokenCheck.ok
+  let ok = true
+  try {
+    await api('/user', { token })
+  } catch (e) {
+    if (e.status === 401) ok = false
+    else return true // offline or GitHub hiccup: don't claim the sign-in is broken
+  }
+  tokenCheck = { token, at: Date.now(), ok }
+  return ok
+}
+
 /** Save a token after checking it works. Accepts a personal access token or an OAuth token. */
 export async function signInWithToken(token) {
   const user = await api('/user', { token: token.trim() })
@@ -201,7 +221,11 @@ export async function sync(dir, { message = 'Saved from Gamesmith', account = ge
 
 function friendly(e) {
   const msg = e?.message || String(e)
-  if (/401|403|auth/i.test(msg)) return new Error('GitHub refused the push. Sign in again, and make sure the token can write to this repository.')
+  if (/401|auth/i.test(msg)) {
+    tokenCheck = { token: getToken(), at: Date.now(), ok: false }
+    return new Error('Your GitHub sign-in has expired or was revoked. Connect GitHub again (Publish panel, step 1).')
+  }
+  if (/403/.test(msg)) return new Error("GitHub refused the push: this sign-in can't write to the repository. Connect again with a token that has the repo scope.")
   if (/404/.test(msg)) return new Error('GitHub repository not found. It may have been renamed or deleted; link it again.')
   return new Error(msg)
 }

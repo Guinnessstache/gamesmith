@@ -26,8 +26,16 @@ def args_after_dashes():
 
 
 # ---------- helpers available to asset scripts ----------
+def srgb_to_linear(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
 def mat(name, color=(0.8, 0.8, 0.8), roughness=0.6, metallic=0.0, emission=None):
-    """Create (or reuse) a simple PBR material. color is RGB 0..1."""
+    """Create (or reuse) a simple PBR material. color is RGB 0..1 as seen on screen
+    (like a color picker); it's converted to the linear values Blender and glTF use."""
+    color = tuple(srgb_to_linear(c) for c in color[:3])
+    if emission is not None:
+        emission = tuple(srgb_to_linear(c) for c in emission[:3])
     m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     m.use_nodes = True
     bsdf = m.node_tree.nodes.get("Principled BSDF")
@@ -123,7 +131,7 @@ def render_preview(path, bounds, px=384):
     scene.camera = cam
 
     sun_data = bpy.data.lights.new("GS_Preview_Sun", "SUN")
-    sun_data.energy = 3.5
+    sun_data.energy = 4.0
     sun = bpy.data.objects.new("GS_Preview_Sun", sun_data)
     sun.rotation_euler = (math.radians(50), math.radians(10), math.radians(35))
     scene.collection.objects.link(sun)
@@ -139,8 +147,8 @@ def render_preview(path, bounds, px=384):
     bg = world.node_tree.nodes.get("Background")
     if bg:
         # A soft grey-blue sky: it lights the model evenly and gives metals something to reflect.
-        bg.inputs[0].default_value = (0.42, 0.46, 0.55, 1)
-        bg.inputs[1].default_value = 1.0
+        bg.inputs[0].default_value = (0.22, 0.25, 0.31, 1)
+        bg.inputs[1].default_value = 0.7
     scene.world = world
 
     scene.render.engine = "CYCLES"
@@ -150,6 +158,9 @@ def render_preview(path, bounds, px=384):
     scene.render.resolution_x = px
     scene.render.resolution_y = px
     scene.render.film_transparent = False
+    # "Standard" keeps the model's colors as chosen (Blender's default view transform washes them out).
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
     scene.render.image_settings.file_format = "PNG"
     scene.render.filepath = path
     bpy.ops.render.render(write_still=True)

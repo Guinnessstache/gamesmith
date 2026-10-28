@@ -83,6 +83,7 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#0e1116',
     title: 'Gamesmith',
+    icon: join(resourcesDir, 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -169,6 +170,15 @@ handle('projects:importGitHub', async (ref) => {
   })
 })
 handle('projects:githubRepos', () => github.listRepos())
+handle('projects:importHtml', async (filePath) => {
+  let file = filePath
+  if (!file) {
+    const r = await dialog.showOpenDialog(win, { title: 'Choose an HTML game file', properties: ['openFile'], filters: [{ name: 'Web page', extensions: ['html', 'htm'] }] })
+    if (r.canceled) return null
+    file = r.filePaths[0]
+  }
+  return importer.importHtmlFile({ file, projectsDir: getSettings().projectsDir })
+})
 handle('projects:openFolder', async () => {
   const r = await dialog.showOpenDialog(win, { title: 'Open a game folder', properties: ['openDirectory'] })
   if (r.canceled) return null
@@ -358,8 +368,10 @@ handle('github:deviceCancel', () => deviceAbort?.abort())
 handle('publish:status', async () => {
   const { dir } = requireProject()
   const meta = projects.readMeta(dir)
+  const authExpired = github.getToken() ? !(await github.tokenWorks()) : false
   const out = {
-    account: github.getAccount(),
+    account: authExpired ? null : github.getAccount(),
+    authExpired,
     hasRenderKey: !!deploy.getRenderKey(),
     repo: meta.github || null,
     lastSync: meta.lastSync || null,
@@ -394,15 +406,24 @@ handle('publish:status', async () => {
 })
 
 const renderLookupDone = new Set()
-const verifyCache = new Map() // `${dir}|${host}|${oid}` -> result
+const verifyCache = new Map() // `${dir}|${host}|${oid}` -> { result, until }
+const SETTLE_MS = 10 * 60 * 1000 // hosts can report "live" for the old version for a few minutes after a save
 async function verifyHost(dir, host, url, force = false) {
   const { oid, files } = await git.deployedFiles(dir)
   const key = `${dir}|${host}|${oid}`
-  if (!force && verifyCache.has(key)) return verifyCache.get(key)
+  const cached = verifyCache.get(key)
+  if (!force && cached && Date.now() < cached.until) return cached.result
   const meta = projects.readMeta(dir)
   const paths = meta.kind === 'node' ? [''] : deploy.publicFiles(importer.servedPaths(files, meta.webRoot))
   const result = await deploy.verifySite(url, paths)
-  verifyCache.set(key, result)
+  // Missing files right after a save are almost always the new version still going live:
+  // say so, and look again shortly instead of reporting a problem.
+  const sinceSave = Date.now() - (meta.lastSync || 0)
+  if (result.failed.length && sinceSave < SETTLE_MS) {
+    result.pending = true
+    result.settlesIn = SETTLE_MS - sinceSave
+  }
+  verifyCache.set(key, { result, until: result.pending ? Date.now() + 15000 : Infinity })
   return result
 }
 handle('publish:recheck', async (host) => {
@@ -562,10 +583,15 @@ handle('library:connectGitHub', (opts) => library.connectGitHub(opts))
 handle('library:sync', () => library.sync())
 
 let modelAbort = null
+let modelRun = null // { assetId, name, startedAt, status } while the modeling AI works
 handle('model:stop', () => modelAbort?.abort())
+handle('model:status', () => modelRun)
 handle('model:run', async (id, userText) => {
-  if (modelAbort) throw new Error('The AI is already working on a model')
+  if (modelAbort) {
+    throw new Error(modelRun && modelRun.assetId !== id ? `The AI is still working on "${modelRun.name}". Stop it there first, or wait for it to finish.` : 'The AI is already working on this model.')
+  }
   requireBlender()
+  modelRun = { assetId: id, name: library.readMeta(id).name, startedAt: Date.now(), status: 'Thinking…' }
   const ai = getSettings().ai
   const history = library.loadChat(id)
   modelAbort = new AbortController()
@@ -576,12 +602,14 @@ handle('model:run', async (id, userText) => {
       const s = steps.find((x) => x.id === ev.id)
       if (s) s.ok = ev.ok
     }
+    if (ev.type === 'status' && modelRun) modelRun.status = ev.text
     send('model:event', { ...ev, assetId: id })
   }
   history.push({ role: 'user', content: userText, time: Date.now() })
   library.saveChat(id, history)
-  await localCommit('Your edits (before AI)')
   try {
+    // Saving a version is a convenience; a git hiccup must never block (or wedge) the AI.
+    await localCommit('Your edits (before AI)').catch((e) => console.warn('library commit failed:', e.message))
     const result = await runModelAgent({
       id,
       ai,
@@ -591,7 +619,7 @@ handle('model:run', async (id, userText) => {
       signal: modelAbort.signal,
       build: () => buildAsset(id, false)
     })
-    const oid = await localCommit(`AI: ${userText.replace(/\s+/g, ' ').slice(0, 72)}`)
+    const oid = await localCommit(`AI: ${userText.replace(/\s+/g, ' ').slice(0, 72)}`).catch(() => null)
     history.push({ role: 'assistant', content: result.reply, time: Date.now(), build: result.build ? { ok: result.build.ok, error: result.build.error } : null, commit: oid, steps })
     library.saveChat(id, history)
     emit({ type: 'done', reply: result.reply, commit: oid })
@@ -604,6 +632,7 @@ handle('model:run', async (id, userText) => {
     throw e
   } finally {
     modelAbort = null
+    modelRun = null
   }
 })
 const localCommit = (msg) => git.commitAll(library.dir(), msg)

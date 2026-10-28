@@ -135,8 +135,8 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
         <AiBadge settings={settings} onClick={onOpenSettings} />
       </header>
 
-      <div className="ws-body">
-        <aside className="left">
+      <div className={`ws-body ${active === 'blender' ? 'no-left' : ''}`}>
+        <aside className="left" hidden={active === 'blender'}>
           <div className="seg">
             <button className={leftPanel === 'files' ? 'on' : ''} onClick={() => setLeftPanel('files')}>Files</button>
             <button className={leftPanel === 'history' ? 'on' : ''} onClick={() => setLeftPanel('history')}>History</button>
@@ -227,6 +227,8 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
               blenderReady={!!studio.blender?.found}
               onOpenSettings={onOpenSettings}
               onRunFinished={studio.refresh}
+              autoPrompt={studio.pendingPrompt}
+              onAutoPromptUsed={() => studio.setPendingPrompt(null)}
             />
           )}
           <div className="chat-slot" hidden={active === 'blender'}>

@@ -1,7 +1,7 @@
 {
   "name": "gamesmith",
   "version": "0.5.0",
-  "description": "Build web games with local AI, save to GitHub, deploy to the web",
+  "description": "Build browser games by describing them, with a local AI, GitHub saving, one-click hosting and Blender-made 3D models.",
   "main": "out/main/index.js",
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
@@ -44,7 +44,8 @@
     "appId": "com.guinnessstache.gamesmith",
     "productName": "Gamesmith",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*"
@@ -57,15 +58,32 @@
     ],
     "win": {
       "target": [
-        "nsis"
-      ]
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Gamesmith",
+      "artifactName": "Gamesmith-Setup.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": null
   },
   "overrides": {
     "dompurify": "^3.4.17"
+  },
+  "homepage": "https://guinnessstache.github.io/gamesmith/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Guinnessstache/gamesmith.git"
   }
 }

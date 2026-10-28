@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gamesmith: make browser games by describing them</title>
+<meta name="description" content="A free Windows app for making browser games with an AI that runs on your own computer. Save to GitHub, publish to the web in one click, and make your own 3D models with Blender." />
+<meta property="og:title" content="Gamesmith" />
+<meta property="og:description" content="Make browser games by describing them, with an AI that runs on your own computer." />
+<meta property="og:image" content="https://guinnessstache.github.io/gamesmith/img/og.png" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="img/favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #121823;
+    --ink-deep: #0d121b;
+    --panel: #171e2a;
+    --raised: #202a3a;
+    --line: #2a3548;
+    --text: #e7ecf5;
+    --muted: #93a0b6;
+    /* The app's own color roles: amber is your game, cyan is the AI, violet is your 3D models. */
+    --game: #ffb547;
+    --game-ink: #2b1b00;
+    --ai: #66d4ff;
+    --model: #b69cff;
+    --live: #63e2a0;
+    --font: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+    --measure: 36rem;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font: 400 1.0625rem/1.6 var(--font);
+    font-variation-settings: 'opsz' 14;
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: var(--ai); text-underline-offset: 3px; }
+  a:hover { color: #9be3ff; }
+  :focus-visible { outline: 2px solid var(--ai); outline-offset: 3px; border-radius: 4px; }
+  h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.02em; line-height: 1.08; }
+  p { margin: 0; }
+  code { font: 0.92em ui-monospace, 'Cascadia Code', Consolas, monospace; background: var(--raised); padding: 0.1em 0.4em; border-radius: 5px; }
+  .wrap { width: min(1160px, 100% - 2rem); margin-inline: auto; }
+
+  /* ---------- top bar ---------- */
+  .top { display: flex; align-items: center; gap: 1rem; padding-block: 1.1rem; }
+  .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; color: var(--text); text-decoration: none; }
+  .brand img { width: 32px; height: 32px; border-radius: 8px; }
+  .top nav { margin-left: auto; display: flex; gap: 1.4rem; align-items: center; }
+  .top nav a { color: var(--muted); text-decoration: none; font-size: 0.95rem; }
+  .top nav a:hover { color: var(--text); }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.55rem;
+    border-radius: 10px; padding: 0.8rem 1.3rem;
+    font: 650 1rem/1.2 var(--font); text-decoration: none; cursor: pointer; border: 1.5px solid transparent;
+  }
+  .btn.download { background: var(--game); color: var(--game-ink); }
+  .btn.download:hover { background: #ffc66e; color: var(--game-ink); }
+  .btn.quiet { border-color: var(--line); color: var(--text); }
+  .btn.quiet:hover { background: var(--panel); color: var(--text); }
+  .btn svg { width: 1.1em; height: 1.1em; flex: none; }
+
+  /* ---------- hero ---------- */
+  .hero { padding-block: 3.5rem 2rem; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 3rem; align-items: end; }
+  .hero h1 {
+    font-size: clamp(2.6rem, 6.4vw, 5.2rem);
+    font-variation-settings: 'opsz' 96, 'wdth' 82;
+    font-weight: 750;
+    letter-spacing: -0.035em;
+    line-height: 0.98;
+    text-wrap: balance;
+  }
+  .hero-side { display: grid; gap: 1.4rem; padding-bottom: 0.4rem; }
+  .hero-side p { color: var(--muted); font-size: 1.15rem; max-width: 30rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+  .release { font-size: 0.9rem; color: var(--muted); min-height: 1.4em; }
+
+  /* The one bold move: the prompt you'd type, and the game it made, side by side. */
+  .demo { position: relative; margin-top: 1rem; }
+  .shot {
+    border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.6);
+    background: var(--panel);
+  }
+  .demo .shot { aspect-ratio: 1440 / 900; }
+  .demo .shot img { width: 100%; height: 100%; object-fit: cover; }
+  .ask {
+    position: absolute; left: -1.25rem; bottom: 12%;
+    max-width: min(24rem, 70%);
+    background: var(--ink-deep); border: 1.5px solid var(--ai); border-radius: 16px 16px 16px 4px;
+    padding: 1rem 1.2rem; box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.7);
+  }
+  .ask .who { color: var(--ai); font-size: 0.85rem; font-weight: 650; margin-bottom: 0.25rem; }
+  .ask .said { font-size: 1.3rem; font-weight: 600; line-height: 1.25; font-variation-settings: 'opsz' 30; }
+  .caret { display: inline-block; width: 0.08em; height: 1.05em; background: var(--ai); vertical-align: -0.15em; margin-left: 2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+
+  /* ---------- sections ---------- */
+  section { padding-block: 5rem; }
+  .section-head { max-width: var(--measure); margin-bottom: 2.5rem; }
+  .section-head h2 { font-size: clamp(1.9rem, 3.6vw, 2.8rem); font-variation-settings: 'opsz' 60; }
+  .section-head p { color: var(--muted); margin-top: 0.8rem; font-size: 1.1rem; }
+
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2rem; counter-reset: step; }
+  .steps li { counter-increment: step; border-top: 2px solid var(--line); padding-top: 1.1rem; }
+  .steps li::before { content: counter(step); display: block; font-size: 2.6rem; font-weight: 750; line-height: 1; margin-bottom: 0.8rem; color: var(--c); font-variation-settings: 'opsz' 96; }
+  .steps h3 { font-size: 1.3rem; margin-bottom: 0.4rem; }
+  .steps p { color: var(--muted); }
+
+  /* feature rows: copy beside a real screenshot, alternating sides */
+  .feature { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 3.5rem; align-items: center; padding-block: 3rem; }
+  .feature.flip .copy { order: 2; }
+  .copy { max-width: 30rem; }
+  .copy h3 { font-size: clamp(1.6rem, 2.8vw, 2.2rem); font-variation-settings: 'opsz' 48; margin-bottom: 0.9rem; }
+  .role { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--c); font-weight: 650; margin-bottom: 0.8rem; font-size: 0.95rem; }
+  .role i { width: 0.7rem; height: 0.7rem; border-radius: 3px; background: var(--c); transform: rotate(45deg); }
+  .copy p + p, .copy p + ul, .copy ul + p { margin-top: 0.9rem; }
+  .copy p, .copy li { color: #c3cddd; }
+  .copy ul { margin: 0; padding-left: 1.1rem; }
+  .copy li + li { margin-top: 0.35rem; }
+  .copy li::marker { color: var(--c); }
+
+  .servers { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.1rem; padding: 0; list-style: none; }
+  .servers li { border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.85rem; font-size: 0.95rem; color: var(--text); }
+  .diagram { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 2rem; }
+  .diagram svg { width: 100%; height: auto; display: block; }
+
+  .more { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2.5rem 3rem; margin-top: 1rem; }
+  .more h3 { font-size: 1.15rem; margin-bottom: 0.35rem; font-variation-settings: 'opsz' 24; }
+  .more p { color: var(--muted); }
+
+  /* ---------- get it ---------- */
+  .get { background: var(--panel); border-block: 1px solid var(--line); }
+  .get-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 4rem; }
+  .install { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 1.4rem; }
+  .install li { counter-increment: s; display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); gap: 0.4rem 1rem; }
+  .install li::before { content: counter(s); grid-row: span 2; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 1.5px solid var(--game); color: var(--game); display: grid; place-items: center; font-weight: 700; }
+  .install h3 { font-size: 1.15rem; align-self: center; }
+  .install p { color: var(--muted); }
+  .note { margin-top: 1.6rem; border-left: 3px solid var(--game); padding: 0.2rem 0 0.2rem 1rem; color: #c3cddd; }
+  .needs { margin: 0; display: grid; gap: 1.1rem; }
+  .needs div { border-top: 1px solid var(--line); padding-top: 1rem; }
+  .needs dt { font-weight: 650; }
+  .needs dd { margin: 0.2rem 0 0; color: var(--muted); }
+
+  details { border-top: 1px solid var(--line); padding-block: 1.1rem; max-width: 46rem; }
+  details:last-of-type { border-bottom: 1px solid var(--line); }
+  summary { cursor: pointer; font-weight: 650; font-size: 1.1rem; list-style: none; display: flex; justify-content: space-between; gap: 1rem; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: '+'; color: var(--muted); font-weight: 400; font-size: 1.4rem; line-height: 1; }
+  details[open] summary::after { content: '–'; }
+  details p { color: var(--muted); margin-top: 0.6rem; max-width: 40rem; }
+
+  footer { padding-block: 3rem; color: var(--muted); font-size: 0.95rem; display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: center; }
+  footer .brand { font-size: 1rem; }
+
+  /* ---------- small screens ---------- */
+  @media (max-width: 900px) {
+    .hero, .feature, .get-grid { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+    .feature.flip .copy { order: 0; }
+    .steps, .more { grid-template-columns: minmax(0, 1fr); }
+    .ask { position: static; max-width: none; margin-top: 1rem; border-radius: 16px; }
+    section { padding-block: 3.5rem; }
+    .top nav a.hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="#"><img src="img/icon.png" alt="" width="32" height="32" /> Gamesmith</a>
+  <nav aria-label="Page">
+    <a class="hide-sm" href="#features">Features</a>
+    <a class="hide-sm" href="#get">Install</a>
+    <a class="hide-sm" href="#faq">Questions</a>
+    <a href="https://github.com/Guinnessstache/gamesmith">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="hero">
+      <h1>Describe a game. Watch it get built.</h1>
+      <div class="hero-side">
+        <p>Gamesmith is a free Windows app for making browser games with an AI that runs on your own computer. It writes the code, plays the game to check for errors, fixes them, and puts the result on the web when you're ready.</p>
+        <div class="actions">
+          <a class="btn download" id="download" href="https://github.com/Guinnessstache/gamesmith/releases/latest/download/Gamesmith-Setup.exe">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5.5 10.5 4.4v7.1H3zm0 13L10.5 19.6v-7H3zm8.5 1.2L21 21v-8.4h-9.5zm0-15.4v7.2H21V3z"/></svg>
+            Download for Windows
+          </a>
+          <a class="btn quiet" href="https://github.com/Guinnessstache/gamesmith">View the source</a>
+        </div>
+        <p class="release" id="release">Windows 10 and 11, 64-bit</p>
+      </div>
+    </div>
+
+    <div class="demo">
+      <div class="shot"><img src="img/build-3d.webp" width="1440" height="900" alt="Gamesmith with a 3D marble game in the preview. The AI chat on the right says it added seven red pillars that bounce the ball away, and that the game runs without errors." /></div>
+      <div class="ask" aria-hidden="true">
+        <div class="who">You</div>
+        <div class="said">Add obstacles that bump the ball away<span class="caret"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <div class="section-head">
+        <h2>How it works</h2>
+      </div>
+      <ol class="steps">
+        <li style="--c: var(--ai)">
+          <h3>Say what you want</h3>
+          <p>Start from a 2D or 3D template, or bring in a game you already have. Then ask for changes in plain words: "add enemies that patrol the platforms."</p>
+        </li>
+        <li style="--c: var(--game)">
+          <h3>It builds and tests itself</h3>
+          <p>The AI edits the code, runs the game in the preview, reads any errors, and fixes them before it hands it back. Every change can be undone with one click.</p>
+        </li>
+        <li style="--c: var(--live)">
+          <h3>Put it on the web</h3>
+          <p>Save to your GitHub account and publish to GitHub Pages or Render. Each later save updates the live game, and Gamesmith checks every file loads.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>What's in it</h2>
+        <p>Everything from the first idea to a link you can send people, in one window.</p>
+      </div>
+
+      <div class="feature" style="--c: var(--game)">
+        <div class="copy">
+          <div class="role"><i></i>Your game</div>
+          <h3>2D and 3D games, built by asking</h3>
+          <p>Games run on Phaser for 2D and Three.js for 3D, both built in, so they work offline and publish as plain web files.</p>
+          <ul>
+            <li>Live preview that reloads as files change, with the game's console beside it</li>
+            <li>The AI tests its own work and fixes what breaks, up to three rounds by default</li>
+            <li>A real code editor (the one from VS Code) whenever you want to look</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="img/build-2d.webp" width="1440" height="900" loading="lazy" alt="A 2D platform game in Gamesmith. The AI reports it added a double jump and the game runs without errors." /></div>
+      </div>
+
+      <div class="feature flip" style="--c: var(--ai)">
+        <div class="copy">
+          <div class="role"><i></i>Your AI</div>
+          <h3>Runs on your own hardware</h3>
+          <p>Point Gamesmith at a model on your PC or another computer on your network, such as a Mac Studio or a gaming PC. No subscription, and your code never goes to a cloud service.</p>
+          <p>Any server that speaks the OpenAI API works:</p>
+          <ul class="servers">
+            <li>Ollama</li><li>LM Studio</li><li>llama.cpp</li><li>MLX</li><li>vLLM</li>
+          </ul>
+        </div>
+        <div class="diagram" role="img" aria-label="Gamesmith on a Windows PC sends requests over your home network to a model server on another computer, then saves to GitHub and publishes to the web.">
+          <svg viewBox="0 0 560 260" fill="none" aria-hidden="true">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#93a0b6"/></marker>
+            </defs>
+            <rect x="20" y="78" width="170" height="104" rx="12" stroke="#ffb547" stroke-width="2"/>
+            <text x="105" y="122" text-anchor="middle" fill="#e7ecf5" font-size="17" font-weight="700" font-family="Bricolage Grotesque, system-ui">Gamesmith</text>
+            <text x="105" y="146" text-anchor="middle" fill="#93a0b6" font-size="14" font-family="Bricolage Grotesque, system-ui">your Windows PC</text>
+            <rect x="370" y="20" width="170" height="96" rx="12" stroke="#66d4ff" stroke-width="2"/>
+            <text x="455" y="60" text-anchor="middle" fill="#e7ecf5" font-size="17" font-weight="700" font-family="Bricolage Grotesque, system-ui">Your AI model</text>
+            <text x="455" y="84" text-anchor="middle" fill="#93a0b6" font-size="14" font-family="Bricolage Grotesque, system-ui">this PC or your network</text>
+            <rect x="370" y="146" width="170" height="96" rx="12" stroke="#63e2a0" stroke-width="2"/>
+            <text x="455" y="186" text-anchor="middle" fill="#e7ecf5" font-size="17" font-weight="700" font-family="Bricolage Grotesque, system-ui">GitHub + the web</text>
+            <text x="455" y="210" text-anchor="middle" fill="#93a0b6" font-size="14" font-family="Bricolage Grotesque, system-ui">when you choose to</text>
+            <path d="M192 112 C270 112 290 68 366 68" stroke="#93a0b6" stroke-width="1.6" marker-end="url(#arr)"/>
+            <path d="M192 150 C270 150 290 194 366 194" stroke="#93a0b6" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arr)"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="feature" style="--c: var(--model)">
+        <div class="copy">
+          <div class="role"><i></i>Your models</div>
+          <h3>Make your own 3D models</h3>
+          <p>Describe a model and the AI builds it in Blender, the free 3D app, which Gamesmith runs in the background. You never need to learn Blender. Gamesmith can download it for you.</p>
+          <ul>
+            <li>Spin it around in the 3D view and see its real size and triangle count</li>
+            <li>Keep it in your own library and add it to any game</li>
+            <li>Back the library up to a private GitHub repository</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="img/blender.webp" width="1440" height="900" loading="lazy" alt="The Blender tab showing a treasure chest model in a 3D view, with its size and materials, a library of other models, and the AI chat that made it." /></div>
+      </div>
+
+      <div class="feature flip" style="--c: var(--live)">
+        <div class="copy">
+          <div class="role"><i></i>Your link</div>
+          <h3>Publish in a click</h3>
+          <p>Sign in to GitHub once. Gamesmith creates the repository, uploads the game, and turns on GitHub Pages (free) or Render. After that, "Save to GitHub" updates the live game.</p>
+          <p>Once a site says it's live, Gamesmith loads every file from it and tells you if anything is missing, so you find out before your friends do.</p>
+        </div>
+        <div class="shot"><img src="img/publish.webp" width="1440" height="900" loading="lazy" alt="The Publish panel: saved on GitHub, and live on both GitHub Pages and Render, with all files loading." /></div>
+      </div>
+
+      <div class="more">
+        <div>
+          <h3>Free assets, built in</h3>
+          <p>Search Poly Haven's free models, textures and skies, and Poly Pizza's low-poly models, from inside the app. Credits are written for you.</p>
+        </div>
+        <div>
+          <h3>Bring in what you have</h3>
+          <p>Open a game from GitHub, a folder, or a single HTML file an AI chat made for you, and keep building on it.</p>
+        </div>
+        <div>
+          <h3>Games with their own server</h3>
+          <p>Multiplayer games with a Node.js server run too. Gamesmith installs packages, starts the server and restarts it when you change its code.</p>
+        </div>
+        <div>
+          <h3>Undo anything</h3>
+          <p>Every AI change is saved as a version. Step back through History, or undo the last request from the chat.</p>
+        </div>
+        <div>
+          <h3>Asset packs</h3>
+          <p>Drop in a zip from Kenney or itch.io. Gamesmith unpacks it, reads the license, and tells the AI what's inside.</p>
+        </div>
+        <div>
+          <h3>Your files stay yours</h3>
+          <p>Games are ordinary folders of HTML and JavaScript. Open them in any editor, host them anywhere.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="get" id="get">
+    <div class="wrap get-grid">
+      <div>
+        <div class="section-head">
+          <h2>Get started</h2>
+        </div>
+        <ol class="install">
+          <li>
+            <h3>Download and run the installer</h3>
+            <p>It installs for your Windows account only and adds a Start menu and desktop shortcut. No admin rights needed.</p>
+          </li>
+          <li>
+            <h3>Start a model server</h3>
+            <p>Install <a href="https://ollama.com">Ollama</a> or <a href="https://lmstudio.ai">LM Studio</a> on this PC or another one, and load a coding model that supports tool calling. A Qwen coder model is a good start.</p>
+          </li>
+          <li>
+            <h3>Connect and build</h3>
+            <p>In Gamesmith, open Settings, enter the server's address, click Test connection, and pick the model. Then click New game.</p>
+          </li>
+        </ol>
+        <p class="note">Windows may show "Windows protected your PC" the first time, because the installer isn't signed with a paid certificate yet. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+      </div>
+      <dl class="needs">
+        <div>
+          <dt>Windows 10 or 11, 64-bit</dt>
+          <dd>The app itself. Games you make run in any modern browser.</dd>
+        </div>
+        <div>
+          <dt>An AI model server</dt>
+          <dd>Local or on your network. More memory means bigger, smarter models; a 30B-class coding model is a good balance of speed and quality.</dd>
+        </div>
+        <div>
+          <dt>Optional: a GitHub account</dt>
+          <dd>To save games online and publish them. Free.</dd>
+        </div>
+        <div>
+          <dt>Optional: Render</dt>
+          <dd>For hosting games with their own server. Static games can use GitHub Pages instead.</dd>
+        </div>
+        <div>
+          <dt>Optional: Blender</dt>
+          <dd>For making 3D models. Gamesmith downloads the official portable version (about 400 MB) when you first open the Blender tab.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Questions</h2>
+      </div>
+      <details>
+        <summary>Does it cost anything?</summary>
+        <p>No. Gamesmith is free, the AI runs on your own hardware, and GitHub Pages hosting is free for public repositories. Render has a free tier for small sites.</p>
+      </details>
+      <details>
+        <summary>Does my code get sent anywhere?</summary>
+        <p>Only to the model server you choose, which can be on your own computer. Nothing goes to GitHub or a host until you click Save or Publish.</p>
+      </details>
+      <details>
+        <summary>Which model should I use?</summary>
+        <p>A coding model that supports tool calling, such as a Qwen coder model. Give it at least 32,000 tokens of context; Gamesmith's README explains how to set that in Ollama and LM Studio.</p>
+      </details>
+      <details>
+        <summary>Can I use a cloud AI instead?</summary>
+        <p>Any OpenAI-compatible endpoint works, so yes, if you have one. Choose "Custom URL" in Settings and paste the address and key.</p>
+      </details>
+      <details>
+        <summary>Is there a Mac or Linux version?</summary>
+        <p>Not as an installer yet. Gamesmith is an Electron app, so it runs from source on Mac and Linux with Node.js: clone the repository, then run <code>npm install</code> and <code>npm run dev</code>.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <a class="brand" href="#"><img src="img/icon.png" alt="" width="24" height="24" style="width:24px;height:24px" /> Gamesmith</a>
+  <span>Made by <a href="https://github.com/Guinnessstache">GuinnessStache</a></span>
+  <a href="https://github.com/Guinnessstache/gamesmith/releases">All releases</a>
+  <a href="https://github.com/Guinnessstache/gamesmith/issues">Report a problem</a>
+</footer>
+
+<script>
+  // Show the newest release's version and size; fall back to the releases page if there isn't one yet.
+  ;(async () => {
+    const out = document.getElementById('release')
+    const btn = document.getElementById('download')
+    try {
+      const r = await fetch('https://api.github.com/repos/Guinnessstache/gamesmith/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+      if (r.status === 404) {
+        btn.href = 'https://github.com/Guinnessstache/gamesmith/releases'
+        out.textContent = 'The first installer is on its way. Until then, you can run it from source.'
+        return
+      }
+      if (!r.ok) return
+      const rel = await r.json()
+      const exe = rel.assets?.find((a) => /\.exe$/i.test(a.name))
+      if (!exe) return
+      btn.href = exe.browser_download_url
+      const mb = Math.round(exe.size / 1e6)
+      const date = new Date(rel.published_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+      out.textContent = `Version ${rel.tag_name.replace(/^v/, '')}, released ${date}. ${mb} MB, for Windows 10 and 11.`
+    } catch {
+      /* offline or rate-limited: the default link still works */
+    }
+  })()
+</script>
+</body>
+</html>

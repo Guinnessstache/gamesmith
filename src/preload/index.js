@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('gs', {
     importGitHub: (ref) => call('projects:importGitHub', ref),
     githubRepos: () => call('projects:githubRepos'),
     openFolder: () => call('projects:openFolder'),
+    importHtml: (filePath) => call('projects:importHtml', filePath),
     onImportProgress: (fn) => on('import:progress', fn)
   },
   preview: {
@@ -114,6 +115,7 @@ contextBridge.exposeInMainWorld('gs', {
   model: {
     run: (id, text) => call('model:run', id, text),
     stop: () => call('model:stop'),
+    status: () => call('model:status'),
     onEvent: (fn) => on('model:event', fn)
   },
   openUrl: (url) => call('open:url', url),

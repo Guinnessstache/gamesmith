@@ -20,21 +20,54 @@ function cleanText(t) {
 }
 
 /** AI chat for the Blender tab: one conversation per library asset. */
-export default function ModelChat({ asset, settings, onOpenSettings, onRunFinished, blenderReady }) {
+export default function ModelChat({ asset, settings, onOpenSettings, onRunFinished, blenderReady, autoPrompt, onAutoPromptUsed }) {
   const [turns, setTurns] = useState([])
   const [input, setInput] = useState('')
   const [live, setLive] = useState(null)
   const scrollRef = useRef(null)
   const id = asset?.meta.id
 
+  const [elsewhere, setElsewhere] = useState(null) // the AI is busy with a different model
+  const idRef = useRef(id)
+  idRef.current = id
+
+  // Switching models (or coming back to this tab) while the AI is still working:
+  // pick its progress back up instead of looking idle.
   useEffect(() => {
     setTurns(asset?.chat || [])
+    setElsewhere(null)
+    let gone = false
+    window.gs.model.status().then((run) => {
+      if (gone || !run) return
+      if (run.assetId === id) setLive((cur) => cur || { segments: [], status: run.status || 'Working…', attached: true })
+      else setElsewhere(run)
+    })
+    return () => {
+      gone = true
+      setLive((cur) => (cur?.attached ? null : cur))
+    }
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(
     () =>
       window.gs.model.onEvent((ev) => {
         if (ev.type === 'build') onRunFinished?.({ partial: true })
+        if (ev.assetId !== idRef.current) {
+          if (ev.type === 'done' || ev.type === 'error') setElsewhere(null)
+          return
+        }
+        if (ev.type === 'done' || ev.type === 'error') {
+          // A run this view only re-attached to: its send() isn't waiting, so finish up here.
+          setLive((cur) => {
+            if (cur?.attached) {
+              window.gs.library.get(ev.assetId).then((a) => idRef.current === ev.assetId && setTurns(a.chat || []))
+              onRunFinished?.({})
+              return null
+            }
+            return cur
+          })
+          return
+        }
         setLive((cur) => {
           if (!cur) return cur
           const segs = [...cur.segments]
@@ -94,7 +127,15 @@ export default function ModelChat({ asset, settings, onOpenSettings, onRunFinish
   }
 
   const noModel = !settings.ai.model
-  const disabled = noModel || !blenderReady || !id
+  const disabled = noModel || !blenderReady || !id || !!elsewhere
+
+  // A description typed in the New model dialog goes straight to the AI.
+  useEffect(() => {
+    if (!autoPrompt || autoPrompt.id !== id || running) return
+    onAutoPromptUsed?.()
+    if (disabled) setInput(autoPrompt.text) // can't run yet: leave it ready in the box
+    else send(autoPrompt.text)
+  }, [autoPrompt, id]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="chat">
       <div className="chat-head">
@@ -156,6 +197,12 @@ export default function ModelChat({ asset, settings, onOpenSettings, onRunFinish
           </div>
         )}
       </div>
+      {elsewhere && (
+        <div className="notice busy-elsewhere">
+          <span>The AI is still working on <strong>{elsewhere.name}</strong>.</span>
+          <button className="btn small stop" onClick={() => window.gs.model.stop()}>Stop it</button>
+        </div>
+      )}
       {id && !disabled && turns.length > 0 && !running && (
         <div className="follow-ups">
           {FOLLOW_UPS.slice(0, 4).map((f) => (

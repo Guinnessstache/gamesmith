@@ -48,7 +48,7 @@ export default function Home({ settings, onOpen, onOpenStudio, onOpenSettings, e
           <button className="project-card new import" onClick={() => setImporting(true)}>
             <span className="plus" aria-hidden>↓</span>
             <span className="project-name">Bring in a game</span>
-            <span className="project-sub">From GitHub or a folder on this PC</span>
+            <span className="project-sub">From GitHub, an HTML file, or a folder</span>
           </button>
           <button className="project-card new studio-card" onClick={onOpenStudio}>
             <span className="plus" aria-hidden>⬢</span>
@@ -166,8 +166,8 @@ function ImportDialog({ onCancel, onImported }) {
     try {
       const p = await fn()
       if (!p) return setBusy('')
-      if (p.lineEndingsFixed || p.startedTracking) {
-        setNote({ p, lineEndings: p.lineEndingsFixed, tracking: p.startedTracking })
+      if (p.lineEndingsFixed || p.startedTracking || p.imported?.source === 'html') {
+        setNote({ p, lineEndings: p.lineEndingsFixed, tracking: p.startedTracking, html: p.imported?.source === 'html' })
         setBusy('')
         return
       }
@@ -183,7 +183,29 @@ function ImportDialog({ onCancel, onImported }) {
       <div className="modal-backdrop">
         <div className="modal">
           <h2>Opened {note.p.name}</h2>
-          {note.tracking && <p>This folder wasn't using git, so Gamesmith started tracking its history there (a hidden .git folder). That's what makes Undo and History work.</p>}
+          {note.html && (
+            <>
+              <p>
+                Made a new game from <strong>{note.p.imported.from}</strong>
+                {note.p.engine !== 'JavaScript' ? ` (${note.p.engine})` : ''}.
+                {note.p.splitInto?.length > 0 && <> To make it easier for the AI to work on, it's split into <code>index.html</code>{note.p.splitInto.map((f) => <span key={f}>, <code>{f}</code></span>)}. The game works exactly as before, and the original file is the first version in History.</>}
+              </p>
+              {note.p.needsInternet?.length > 0 && (
+                <p className="muted">
+                  It loads {note.p.imported.libraries?.length ? note.p.imported.libraries.join(', ') : 'libraries'} from {note.p.needsInternet.join(', ')}, so the preview needs an internet connection. Published versions work the same way.
+                </p>
+              )}
+              {note.p.missing?.length > 0 && (
+                <div className="notice">
+                  <span>
+                    The page refers to {note.p.missing.length} file{note.p.missing.length > 1 ? 's' : ''} that weren't part of the import: {note.p.missing.slice(0, 6).map((f) => <code key={f}>{f} </code>)}
+                    {note.p.missing.length > 6 ? '…' : ''} Add them in the game's Files panel (Add assets), or ask the AI to replace them.
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+          {note.tracking && !note.html && <p>This folder wasn't using git, so Gamesmith started tracking its history there (a hidden .git folder). That's what makes Undo and History work.</p>}
           {note.lineEndings && (
             <p>
               This copy has Windows line endings, which Gamesmith's built-in git would have seen as changes to every file. Gamesmith turned on line-ending conversion
@@ -239,6 +261,14 @@ function ImportDialog({ onCancel, onImported }) {
           </div>
         )}
         {repos?.length === 0 && <p className="muted small">Connect GitHub (Publish panel or Settings) to pick from your repositories, including private ones.</p>}
+
+        <h3>From a single HTML file</h3>
+        <div className="field-row">
+          <span className="grow-text muted small">A whole game in one .html file, like one an AI chat made for you. It becomes a new game you can keep building on.</span>
+          <button className="btn ghost" onClick={() => run('html', () => window.gs.projects.importHtml())} disabled={!!busy}>
+            {busy === 'html' ? 'Importing…' : 'Choose .html file…'}
+          </button>
+        </div>
 
         <h3>From a folder on this PC</h3>
         <div className="field-row">

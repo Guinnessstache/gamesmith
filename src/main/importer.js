@@ -219,6 +219,125 @@ async function setUp(dir, { source, remote }) {
   return { ...meta, dir }
 }
 
+// ---------- start from a single HTML file ----------
+
+const SKIP_SCRIPT_TYPES = /^(importmap|application\/(ld\+)?json|text\/(template|x-[\w-]+|plain)|x-shader\/[\w-]+)$/i
+const attr = (attrs, name) => attrs.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'))?.slice(2).find((v) => v !== undefined)
+
+/**
+ * Split a one-file HTML game into index.html + style.css + game.js, so the AI can
+ * read and edit pieces of it. Files go next to index.html, so relative imports,
+ * fetch() calls and import.meta.url resolve exactly as before. Small inline bits
+ * (under 5 lines) and special blocks (import maps, shaders, JSON) stay inline.
+ */
+export function splitHtml(html) {
+  const files = {}
+  const used = new Set()
+  const pick = (base, ext) => {
+    let name = `${base}.${ext}`
+    for (let i = 2; used.has(name); i++) name = `${base}-${i}.${ext}`
+    used.add(name)
+    return name
+  }
+  const lines = (t) => t.split('\n').length
+  let out = html.replace(/<style(\s[^>]*)?>([\s\S]*?)<\/style>/gi, (whole, attrs = '', css) => {
+    if (lines(css) < 5 || /\bmedia\s*=/.test(attrs)) return whole
+    const name = pick('style', 'css')
+    files[name] = dedent(css)
+    return `<link rel="stylesheet" href="${name}" />`
+  })
+  out = out.replace(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi, (whole, attrs = '', code) => {
+    const type = attr(attrs, 'type') || ''
+    if (attr(attrs, 'src') !== undefined || SKIP_SCRIPT_TYPES.test(type) || lines(code) < 5) return whole
+    if (type && !/^(module|text\/javascript|application\/javascript)$/i.test(type)) return whole
+    const name = pick('game', 'js')
+    files[name] = dedent(code)
+    return `<script${attrs} src="${name}"></script>`
+  })
+  return { html: out, files }
+}
+
+function dedent(text) {
+  const body = text.replace(/^\s*\n/, '').replace(/\s+$/, '')
+  const indents = body.split('\n').filter((l) => l.trim()).map((l) => l.match(/^[ \t]*/)[0].length)
+  const cut = indents.length ? Math.min(...indents) : 0
+  return body.split('\n').map((l) => l.slice(cut)).join('\n') + '\n'
+}
+
+/** Local files the page refers to (src/href/url()), and libraries it loads from the internet. */
+export function htmlReferences(html, cssAndJs = '') {
+  const local = new Set()
+  const external = new Set()
+  const add = (u) => {
+    if (!u || /^(#|data:|blob:|mailto:|javascript:|about:)/i.test(u) || u.includes('${')) return
+    if (/^(https?:)?\/\//i.test(u)) {
+      try {
+        external.add(new URL(u.startsWith('//') ? 'https:' + u : u).host)
+      } catch {
+        /* not a URL */
+      }
+      return
+    }
+    local.add(u.split(/[?#]/)[0].replace(/^\.\//, ''))
+  }
+  for (const m of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)) add(m[1])
+  for (const m of (html + cssAndJs).matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) add(m[1])
+  // import maps and module imports that point at CDNs
+  for (const m of (html + cssAndJs).matchAll(/["'](https:\/\/[^"']+)["']/g)) add(m[1])
+  return { local: [...local].filter(Boolean), external: [...external] }
+}
+
+/** The library versions a page pins in its import map or script URLs, e.g. "three@0.160.0". */
+function pinnedLibraries(html) {
+  const out = new Set()
+  for (const m of html.matchAll(/\/npm\/((?:@[\w.-]+\/)?[\w.-]+@[\w.-]+)/g)) out.add(m[1])
+  for (const m of html.matchAll(/unpkg\.com\/((?:@[\w.-]+\/)?[\w.-]+@[\w.-]+)/g)) out.add(m[1])
+  return [...out]
+}
+
+/** Make a new game folder from one HTML file, keeping the original as the first version. */
+export async function importHtmlFile({ file, projectsDir, name }) {
+  const html = fs.readFileSync(file, 'utf8')
+  if (!/<(html|body|canvas|script)\b/i.test(html)) throw new Error("That file doesn't look like an HTML page.")
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim()
+  const fromTitle = title?.split(/\s+[·|–—-]\s+/)[0]?.trim()
+  const pretty = (name || fromTitle || basename(file).replace(/\.html?$/i, '')).trim() || 'Imported game'
+  const slug = pretty.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'game'
+  fs.mkdirSync(projectsDir, { recursive: true })
+  let dir = join(projectsDir, slug)
+  for (let i = 2; fs.existsSync(dir); i++) dir = join(projectsDir, `${slug}-${i}`)
+  fs.mkdirSync(dir)
+
+  // Version 1: the file exactly as it was.
+  fs.writeFileSync(join(dir, 'index.html'), html)
+  const meta = await setUp(dir, { source: 'html' })
+
+  // Version 2: split into files the AI can work with.
+  const { html: shell, files } = splitHtml(html)
+  const parts = Object.keys(files)
+  if (parts.length) {
+    fs.writeFileSync(join(dir, 'index.html'), shell)
+    for (const [f, text] of Object.entries(files)) fs.writeFileSync(join(dir, f), text)
+  }
+  fs.writeFileSync(
+    join(dir, 'README.md'),
+    `# ${pretty}\n\nStarted in Gamesmith from \`${basename(file)}\`${title ? ` ("${title}")` : ''}. The first version in History is the original file; the next one splits it into ${['index.html', ...parts].join(', ')} so it's easier to change.\n`
+  )
+  await localGit.commitAll(dir, parts.length ? `Split ${basename(file)} into ${parts.join(', ')}` : 'Added README')
+
+  const refs = htmlReferences(html, Object.values(files).join('\n'))
+  const missing = refs.local.filter((p) => !fs.existsSync(join(dir, p)))
+  const libraries = pinnedLibraries(html)
+  const full = {
+    ...meta,
+    name: pretty,
+    imported: { ...meta.imported, from: basename(file), title, cdn: refs.external, libraries },
+    splitInto: parts
+  }
+  writeMeta(dir, full)
+  return { ...full, dir, missing, needsInternet: refs.external }
+}
+
 /** Paths under webRoot, relative to it (what a static host serves). */
 export function servedPaths(files, webRoot) {
   if (!webRoot || webRoot === '.') return files

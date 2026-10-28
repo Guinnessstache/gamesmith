@@ -74,6 +74,42 @@ console.log('PASS  detection: static root/docs, Vite dev server, engine guess, u
   console.log('PASS  open folder: Windows line endings fixed (no false changes), real edits still seen, .gitignore untouched')
 }
 
+// ---------- 2b. a whole game in one HTML file ----------
+{
+  const projectsDir = join(tmp, 'from-html')
+  const p = await importer.importHtmlFile({ file: join(root, 'scripts/fixtures/one-file-game.html'), projectsDir })
+  assert.equal(p.name, 'Dot Dodger', 'name taken from the <title>, before the separator')
+  assert.equal(p.kind, 'static')
+  assert.deepEqual(p.splitInto, ['style.css', 'game.js'])
+  const html = readFileSync(join(p.dir, 'index.html'), 'utf8')
+  assert.match(html, /<link rel="stylesheet" href="style.css" \/>/)
+  assert.match(html, /<script src="game.js"><\/script>/)
+  assert.ok(!/getContext/.test(html), 'code moved out of index.html')
+  assert.match(readFileSync(join(p.dir, 'game.js'), 'utf8'), /^const c = document.getElementById\('c'\)/, 'code dedented, nothing lost')
+  assert.deepEqual(p.missing, ['img/logo.png'], 'reports files the page needs that were not imported')
+  const history = await git.log({ fs, dir: p.dir })
+  assert.equal(history.length, 2)
+  const { blob } = await git.readBlob({ fs, dir: p.dir, oid: history[1].oid, filepath: 'index.html' })
+  assert.equal(Buffer.from(blob).toString(), readFileSync(join(root, 'scripts/fixtures/one-file-game.html'), 'utf8'), 'first version is the original file, byte for byte')
+  const again = await importer.importHtmlFile({ file: join(root, 'scripts/fixtures/one-file-game.html'), projectsDir })
+  assert.ok(again.dir.endsWith('dot-dodger-2'), 'importing twice makes a second game, never overwrites')
+
+  // CDN detection, import maps and shaders stay inline
+  const cdn = `<!doctype html><title>Wild</title><script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script type="x-shader/x-vertex">\nvoid main(){\n gl_Position = vec4(0);\n}\n// four\n// five\n</script>
+<script type="module">\nimport * as THREE from 'three'\nconst s = new THREE.Scene()\nconsole.log(s)\n// line\n// line\n</script>`
+  const f = join(tmp, 'wild.html')
+  writeFileSync(f, cdn)
+  const w = await importer.importHtmlFile({ file: f, projectsDir })
+  assert.equal(w.engine, 'Three.js')
+  assert.deepEqual(w.needsInternet, ['cdn.jsdelivr.net'])
+  assert.deepEqual(w.imported.libraries, ['three@0.160.0'])
+  const wh = readFileSync(join(w.dir, 'index.html'), 'utf8')
+  assert.match(wh, /type="importmap"/) && assert.match(wh, /x-shader\/x-vertex">\nvoid main/)
+  assert.match(wh, /<script type="module" src="game.js"><\/script>/)
+  console.log('PASS  one-file HTML game: new game, split into style.css + game.js, original kept as version 1, missing files and CDN libraries reported')
+}
+
 // ---------- 3. a real game repo with its own server ----------
 if (realRepo) {
   // Serve a bare copy over git smart HTTP so import goes through the same clone path as GitHub.

@@ -1,0 +1,52 @@
+# Builds the Windows installer and publishes it as a GitHub Release.
+#
+# To release: set "version" in package.json, commit, then push a matching tag:
+#   git tag v0.6.0
+#   git push origin v0.6.0
+# The website's Download button always points at the newest release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # "Run workflow" button on the Actions tab: builds without releasing
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: |
+          npm run test:agent
+          npm run test:secrets
+
+      - name: Build installer
+        run: |
+          npm run build
+          npx electron-builder --win --x64 --publish never
+
+      - name: Keep the installer (Actions tab)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gamesmith-Setup
+          path: release/Gamesmith-Setup.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/Gamesmith-Setup.exe
+          generate_release_notes: true

@@ -1,6 +1,6 @@
 {
   "name": "gamesmith",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Build browser games by describing them, with a local AI, GitHub saving, one-click hosting and Blender-made 3D models.",
   "main": "out/main/index.js",
   "scripts": {
@@ -17,7 +17,8 @@
     "test:secrets": "node scripts/test-secrets.mjs",
     "test:blender": "node scripts/test-blender.mjs",
     "test:import": "node scripts/test-import.mjs",
-    "test:mocap": "node scripts/test-mocap.mjs"
+    "test:mocap": "node scripts/test-mocap.mjs",
+    "test:updater": "electron scripts/test-updater.cjs"
   },
   "author": "Jason Thistle",
   "license": "MIT",
@@ -37,6 +38,7 @@
     "vite": "^8.3.5"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "fflate": "^0.8.3",
     "isomorphic-git": "^1.44.5",
     "ws": "^8.22.0"
@@ -78,7 +80,14 @@
       "artifactName": "Gamesmith-Setup.${ext}",
       "deleteAppDataOnUninstall": false
     },
-    "publish": null
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Guinnessstache",
+        "repo": "gamesmith",
+        "releaseType": "release"
+      }
+    ]
   },
   "overrides": {
     "dompurify": "^3.4.17"

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { UpdateSettings } from './Updates.jsx'
 
 function buildUrl(preset, host, port, presets) {
   const p = presets[preset]
@@ -249,6 +250,9 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
             Choose…
           </button>
         </div>
+
+        <h3>Updates</h3>
+        <UpdateSettings />
 
         <div className="modal-actions">
           <button className="btn ghost" onClick={onClose}>Cancel</button>

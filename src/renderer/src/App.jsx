@@ -3,6 +3,7 @@ import Home from './components/Home.jsx'
 import Workspace from './components/Workspace.jsx'
 import Settings from './components/Settings.jsx'
 import StudioPage from './components/StudioPage.jsx'
+import { UpdateNotice } from './components/Updates.jsx'
 
 export default function App() {
   const [settings, setSettings] = useState(null)
@@ -54,6 +55,7 @@ export default function App() {
       ) : (
         <Home settings={settings} onOpen={openProject} onOpenStudio={() => setStudio(true)} onOpenSettings={() => setShowSettings(true)} error={error} />
       )}
+      <UpdateNotice />
       {showSettings && (
         <Settings
           settings={settings}

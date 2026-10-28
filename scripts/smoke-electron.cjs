@@ -7,6 +7,14 @@
 const { app, BrowserWindow } = require('electron')
 const FAKE_BLENDER = process.env.GAMESMITH_BLENDER || require('node:path').join(__dirname, 'fake-blender.py')
 process.env.GAMESMITH_BLENDER = '/no/blender/here' // start without Blender to see the setup screen
+// A local update server that offers version 9.9.9 (the updater test covers checksums and errors)
+const updateBytes = require('node:crypto').randomBytes(50000)
+const updateSha = require('node:crypto').createHash('sha512').update(updateBytes).digest('base64')
+const updates = require('node:http').createServer((req, res) => {
+  if (/^\/latest(-[a-z]+)?\.yml/.test(req.url)) return res.end(`version: 9.9.9\nfiles:\n  - url: Gamesmith-Setup.exe\n    sha512: ${updateSha}\n    size: ${updateBytes.length}\npath: Gamesmith-Setup.exe\nsha512: ${updateSha}\nreleaseDate: '2026-10-28T12:00:00.000Z'\nreleaseNotes: 'Faster everything'\n`)
+  if (req.url.startsWith('/Gamesmith-Setup.exe')) return res.end(updateBytes)
+  res.writeHead(404).end()
+})
 const http = require('node:http')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -100,6 +108,10 @@ const check = (cond, msg) => {
 }
 
 mock.listen(0, '127.0.0.1', async () => {
+  await new Promise((r) => updates.listen(0, '127.0.0.1', r))
+  process.env.GAMESMITH_UPDATE_URL = `http://127.0.0.1:${updates.address().port}`
+  process.env.GAMESMITH_APP_VERSION = '0.8.0'
+  process.env.GAMESMITH_UPDATE_DELAY_MS = '1500'
   const port = mock.address().port
   const services = await require('./mock-services.cjs').startMockServices(path.join(tmp, 'remote'))
   process.env.GAMESMITH_GITHUB_API = `http://127.0.0.1:${services.port}/api`
@@ -152,6 +164,16 @@ mock.listen(0, '127.0.0.1', async () => {
 
   try {
     await waitFor('.project-card.new')
+    check(await waitFor('.update-notice', 15000), 'update notice appears when a new version is out')
+    const noticeText = await js(`document.querySelector('.update-notice').innerText`)
+    check(/Gamesmith 9\.9\.9 is available/.test(noticeText) && /You have 0\.8\.0/.test(noticeText), 'notice names the new and current versions')
+    await js(`[...document.querySelectorAll('.update-notice button')].find(b => b.textContent === "What's new").click()`)
+    await sleep(200)
+    check(/Faster everything/.test(await js(`document.querySelector('.update-notes')?.textContent || ''`)), "What's new shows the release notes")
+    await shot('0-update-available')
+    await js(`[...document.querySelectorAll('.update-notice button')].find(b => b.textContent === 'Update now').click()`)
+    check(await waitFor('.update-notice .btn.play', 15000) && /Restart to update/.test(await js(`document.querySelector('.update-notice').innerText`)), 'downloads, then offers Restart to update')
+    await shot('0b-update-ready')
     await shot('1-home-empty')
 
     // New-game dialog

@@ -118,6 +118,13 @@ contextBridge.exposeInMainWorld('gs', {
     status: () => call('model:status'),
     onEvent: (fn) => on('model:event', fn)
   },
+  updater: {
+    status: () => call('updater:status'),
+    check: () => call('updater:check'),
+    download: () => call('updater:download'),
+    install: () => call('updater:install'),
+    onStatus: (fn) => on('updater:status', fn)
+  },
   mocap: {
     status: () => call('mocap:status'),
     downloadModel: () => call('mocap:downloadModel'),

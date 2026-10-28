@@ -408,3 +408,10 @@ a { color: var(--cyan); }
 .review-controls select { width: auto; padding: 3px 6px; margin-left: 6px; }
 .review-controls .notice { margin: 0; padding: 6px 10px; }
 .figure-stage, .motion-video { width: 100%; height: 100%; display: block; background: #11161f; object-fit: contain; }
+
+/* ---------- updates ---------- */
+.update-notice { position: fixed; left: 16px; bottom: 16px; z-index: 50; width: 300px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 12px; padding: 12px 14px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 8px; }
+.update-notice p { margin: 0; }
+.update-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.update-actions { display: flex; gap: 8px; }
+.update-notes { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font: 12.5px/1.45 var(--ui); color: var(--muted); background: var(--ink); border-radius: 8px; padding: 8px; }

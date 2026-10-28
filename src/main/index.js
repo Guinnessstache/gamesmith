@@ -17,6 +17,7 @@ import * as blender from './blender.js'
 import * as library from './library.js'
 import { runModelAgent } from './modelAgent.js'
 import * as mocap from './mocap.js'
+import { Updater } from './updater.js'
 import isoGit from 'isomorphic-git'
 import nodeFs from 'node:fs'
 
@@ -641,6 +642,13 @@ handle('model:run', async (id, userText) => {
 })
 const localCommit = (msg) => git.commitAll(library.dir(), msg)
 
+// ---------- updates (installed app) ----------
+let updater = null
+handle('updater:status', () => updater?.status || null)
+handle('updater:check', () => updater.check())
+handle('updater:download', () => updater.download())
+handle('updater:install', () => updater.install())
+
 // ---------- motion capture ----------
 let modelDownload = null
 handle('mocap:status', () => ({ model: mocap.hasModel(app.getPath('userData')), modelMB: Math.round(mocap.POSE_MODEL.bytes / 1e6) }))
@@ -698,6 +706,20 @@ app.whenReady().then(async () => {
   assets.polyPizza.configureKeyStore(stores.polypizza)
   deploy.configureRenderStore(stores.render)
   library.configure(getSettings().libraryDir)
+  // Tests run Electron on a script, which reports its own version; give it ours.
+  if (process.env.GAMESMITH_APP_VERSION && typeof app.setVersion === 'function') app.setVersion(process.env.GAMESMITH_APP_VERSION)
+  try {
+    updater = new Updater({ packaged: app.isPackaged, version: process.env.GAMESMITH_APP_VERSION || app.getVersion() })
+  } catch (e) {
+    console.warn('Updates unavailable:', e.message) // never let the updater stop the app from starting
+    updater = new Updater({ packaged: false, version: app.getVersion(), feedUrl: '' })
+  }
+  updater.on('status', (st) => send('updater:status', st))
+  if (updater.mode === 'installed') {
+    // Quietly look for a new version shortly after start, then every 6 hours.
+    setTimeout(() => updater.check(), Number(process.env.GAMESMITH_UPDATE_DELAY_MS || 8000))
+    setInterval(() => updater.check(), 6 * 3600 * 1000).unref()
+  }
   protocol.handle('gsassets', mocap.makeHandler({ resourcesDir, userData: app.getPath('userData') }))
   // The webcam is only for the app's own Motions screen, never for games in the preview.
   const ownPage = (url) => /^(file:|http:\/\/localhost:)/.test(url || '')

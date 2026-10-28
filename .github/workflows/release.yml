@@ -42,11 +42,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Gamesmith-Setup
-          path: release/Gamesmith-Setup.exe
+          path: |
+            release/Gamesmith-Setup.exe
+            release/latest.yml
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/Gamesmith-Setup.exe
+          # latest.yml tells installed copies of Gamesmith that this version exists (and its checksum)
+          files: |
+            release/Gamesmith-Setup.exe
+            release/Gamesmith-Setup.exe.blockmap
+            release/latest.yml
           generate_release_notes: true

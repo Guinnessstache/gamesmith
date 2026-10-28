@@ -4,7 +4,7 @@
 
 Build browser games by describing them. Gamesmith is a desktop app (Electron) that pairs a live game preview and code editor with an AI agent running on your own model server, such as a Mac Studio on your network.
 
-**Version 0.7 (this build)**
+**Version 0.8 (this build)**
 - New games from a 2D (Phaser 3) or 3D (Three.js) starter template. Engines are bundled, so games run offline and deploy as plain static files.
 - Live preview with hot reload, a console panel, and "Open in browser".
 - An AI agent that reads and edits files, runs the game, reads the console errors, and fixes them on its own (up to 3 rounds by default).
@@ -94,6 +94,10 @@ To build the Windows installer (`release/Gamesmith-Setup.exe`) on your own PC:
 npm run dist
 ```
 
+### Updates
+
+The installed app checks GitHub Releases a few seconds after it starts and every 6 hours. When there's a newer version, a notice in the corner offers **Update now** (downloads in the background and checks it against the release's checksum) and then **Restart to update**. Settings, Updates shows your version and has **Check for updates**. Games, models, motions and settings aren't touched by an update. A copy run from source (`npm run dev`) doesn't update itself; use git.
+
 ### Releasing a new version
 
 GitHub builds the installer for you (`.github/workflows/release.yml`). Set `"version"` in `package.json`, commit and push, then push a tag with the same number:
@@ -106,7 +110,7 @@ git tag v0.5.0
 git push origin v0.5.0
 ```
 
-About 10 minutes later the installer is on the [Releases page](https://github.com/Guinnessstache/gamesmith/releases), and the website's Download button points to it. The website itself is `docs/index.html`, published with GitHub Pages (Settings, Pages, branch `main`, folder `/docs`). Its screenshots come from `scripts/showcase-shots.cjs`.
+About 10 minutes later the installer is on the [Releases page](https://github.com/Guinnessstache/gamesmith/releases), the website's Download button points to it, and installed copies offer the update. The release must include `latest.yml` (the workflow uploads it); that file is how installed copies learn about the new version. The website itself is `docs/index.html`, published with GitHub Pages (Settings, Pages, branch `main`, folder `/docs`). Its screenshots come from `scripts/showcase-shots.cjs`.
 
 ## Connect the Mac Studio
 
@@ -204,6 +208,12 @@ The modeling AI, library and Blender harness against real Blender. Set `GAMESMIT
 ```
 npm run test:mocap
 ```
+
+```
+npm run test:updater
+```
+
+The updater against a local update server: finds a newer version, downloads and verifies it, refuses a corrupted download, handles being offline (Linux: `xvfb-run -a npx electron --no-sandbox scripts/test-updater.cjs`).
 
 Motion clean-up (gap filling, smoothing, mirroring, jump height, loops, trimming). The Blender suite also checks retargeting: a posed skeleton turned into tracker landmarks and back must match within 3 degrees per bone. The full recording flow runs in the app with a fake webcam: `GAMESMITH_POSE_MODEL=pose_landmarker_full.task xvfb-run -a npx electron --no-sandbox scripts/smoke-mocap.cjs --camera=person.y4m`.
 

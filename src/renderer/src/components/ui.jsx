@@ -41,6 +41,7 @@ export function TemplateGlyph({ template, engine = '' }) {
 }
 
 export function timeAgo(ms) {
+  if (typeof ms === 'string') ms = Date.parse(ms)
   const s = Math.max(1, Math.round((Date.now() - ms) / 1000))
   if (s < 60) return 'just now'
   const m = Math.round(s / 60)
@@ -54,7 +55,7 @@ export function timeAgo(ms) {
 export function languageFor(path) {
   const ext = path.split('.').pop().toLowerCase()
   return (
-    { js: 'javascript', mjs: 'javascript', json: 'json', html: 'html', htm: 'html', css: 'css', md: 'markdown', glsl: 'cpp', vert: 'cpp', frag: 'cpp', svg: 'xml' }[ext] ||
+    { js: 'javascript', mjs: 'javascript', py: 'python', json: 'json', html: 'html', htm: 'html', css: 'css', md: 'markdown', glsl: 'cpp', vert: 'cpp', frag: 'cpp', svg: 'xml' }[ext] ||
     'plaintext'
   )
 }

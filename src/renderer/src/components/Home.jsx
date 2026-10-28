@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AiBadge, TemplateGlyph, timeAgo } from './ui.jsx'
 
-export default function Home({ settings, onOpen, onOpenSettings, error }) {
+export default function Home({ settings, onOpen, onOpenStudio, onOpenSettings, error }) {
   const [projects, setProjects] = useState(null)
   const [templates, setTemplates] = useState([])
   const [creating, setCreating] = useState(false)
@@ -21,6 +21,7 @@ export default function Home({ settings, onOpen, onOpenSettings, error }) {
           <span className="brand-mark" aria-hidden>◆</span> Gamesmith
         </div>
         <div className="spacer" />
+        <button className="btn ghost" onClick={onOpenStudio}>⬢ My 3D models</button>
         <AiBadge settings={settings} onClick={onOpenSettings} />
         <button className="btn ghost" onClick={onOpenSettings}>Settings</button>
       </header>
@@ -48,6 +49,11 @@ export default function Home({ settings, onOpen, onOpenSettings, error }) {
             <span className="plus" aria-hidden>↓</span>
             <span className="project-name">Bring in a game</span>
             <span className="project-sub">From GitHub or a folder on this PC</span>
+          </button>
+          <button className="project-card new studio-card" onClick={onOpenStudio}>
+            <span className="plus" aria-hidden>⬢</span>
+            <span className="project-name">Make a 3D model</span>
+            <span className="project-sub">Describe it; the AI builds it in Blender</span>
           </button>
           {projects === null && <div className="muted pad">Loading…</div>}
           {projects?.map((p) => (

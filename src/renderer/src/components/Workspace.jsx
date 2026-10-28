@@ -6,6 +6,8 @@ import Preview from './Preview.jsx'
 import Chat from './Chat.jsx'
 import PublishPanel from './PublishPanel.jsx'
 import AssetBrowser from './AssetBrowser.jsx'
+import BlenderStudio, { useModelStudio } from './BlenderStudio.jsx'
+import ModelChat from './ModelChat.jsx'
 import { AiBadge, TemplateGlyph, isTextFile, isImage } from './ui.jsx'
 
 export default function Workspace({ project, settings, onClose, onOpenSettings }) {
@@ -19,6 +21,7 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
   const [pub, setPub] = useState(null) // publish status for the top bar
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
+  const studio = useModelStudio()
 
   const refreshPub = useCallback(() => {
     window.gs.publish.status().then(setPub).catch(() => setPub(null))
@@ -76,7 +79,7 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
   }, [refreshFiles])
 
   useEffect(() => {
-    if (active !== 'game' && active !== 'assets' && !tabs.some((t) => t.path === active)) setActive('game')
+    if (active !== 'game' && active !== 'assets' && active !== 'blender' && !tabs.some((t) => t.path === active)) setActive('game')
   }, [tabs, active])
 
   const openFile = async (path) => {
@@ -153,6 +156,9 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
             <button className={`tab assets-tab ${active === 'assets' ? 'on' : ''}`} onClick={() => setActive('assets')}>
               <span className="play-icon" aria-hidden>◆</span> Assets
             </button>
+            <button className={`tab blender-tab ${active === 'blender' ? 'on' : ''}`} onClick={() => setActive('blender')}>
+              <span className="play-icon" aria-hidden>⬢</span> Blender
+            </button>
             {tabs.map((t) => (
               <div key={t.path} className={`tab ${active === t.path ? 'on' : ''}`} onClick={() => setActive(t.path)} title={t.path}>
                 <span>{t.path.split('/').pop()}</span>
@@ -188,6 +194,11 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
                 />
               </div>
             )}
+            {active === 'blender' && (
+              <div className="editor-layer">
+                <BlenderStudio studio={studio} project={project} />
+              </div>
+            )}
             {activeTab && (
               <div className="editor-layer">
                 {activeTab.image ? (
@@ -209,6 +220,16 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
         </section>
 
         <aside className="right">
+          {active === 'blender' && (
+            <ModelChat
+              asset={studio.asset}
+              settings={settings}
+              blenderReady={!!studio.blender?.found}
+              onOpenSettings={onOpenSettings}
+              onRunFinished={studio.refresh}
+            />
+          )}
+          <div className="chat-slot" hidden={active === 'blender'}>
           <Chat
             project={project}
             settings={settings}
@@ -221,6 +242,7 @@ export default function Workspace({ project, settings, onClose, onOpenSettings }
               setHistoryTick((n) => n + 1)
             }}
           />
+          </div>
         </aside>
       </div>
       {showPublish && (

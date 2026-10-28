@@ -90,6 +90,14 @@ function startMockServices(remoteRoot) {
           html_url: `https://github.com/Guinnessstache/${data.name}`, clone_url: `http://127.0.0.1:${port}/git/${data.name}.git`, default_branch: 'main'
         })
       }
+      const repoGet = url.match(/^\/api\/repos\/Guinnessstache\/([\w.-]+)$/)
+      if (repoGet && req.method === 'GET') {
+        if (!state.repos.includes(repoGet[1])) return json(res, 404, { message: 'Not Found' })
+        return json(res, 200, {
+          name: repoGet[1], full_name: `Guinnessstache/${repoGet[1]}`, owner: { login: 'Guinnessstache' }, private: true,
+          html_url: `https://github.com/Guinnessstache/${repoGet[1]}`, clone_url: `http://127.0.0.1:${port}/git/${repoGet[1]}.git`, default_branch: 'main'
+        })
+      }
       const pagesUrl = `http://127.0.0.1:${port}/site/Space-Goats/`
       if (url.endsWith('/pages') && req.method === 'POST') {
         state.pages = { at: Date.now() }

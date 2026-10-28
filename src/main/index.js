@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, safeStorage, net } from 'electron'
 import { join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { getSettings, setSettings, AI_PRESETS } from './settings.js'
@@ -13,6 +13,9 @@ import * as assets from './assets.js'
 import { createSecretStore } from './secretStore.js'
 import * as importer from './importer.js'
 import { GameServer } from './gameServer.js'
+import * as blender from './blender.js'
+import * as library from './library.js'
+import { runModelAgent } from './modelAgent.js'
 import isoGit from 'isomorphic-git'
 import nodeFs from 'node:fs'
 
@@ -128,7 +131,12 @@ function handle(channel, fn) {
 
 // ---------- settings & AI ----------
 handle('settings:get', () => ({ settings: getSettings(), presets: AI_PRESETS }))
-handle('settings:set', (patch) => setSettings(patch))
+handle('settings:set', (patch) => {
+  const s = setSettings(patch)
+  if (patch.libraryDir) library.configure(s.libraryDir)
+  if (patch.blender) blenderInfo = null
+  return s
+})
 handle('ai:models', (aiOverride) => listModels({ ...getSettings().ai, ...(aiOverride || {}) }))
 handle('dialog:pickFolder', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
@@ -466,6 +474,140 @@ handle('publish:createRender', async (ownerId) => {
   projects.updateMeta(dir, { render: site })
   return site
 })
+// ---------- Blender + your asset library ----------
+const runnerPy = () => join(resourcesDir, 'blender', 'runner.py')
+let blenderInfo = null
+function findBlender(force) {
+  if (!blenderInfo?.found || force) blenderInfo = blender.find(app.getPath('userData'), getSettings().blender?.path)
+  return blenderInfo
+}
+function requireBlender() {
+  const b = findBlender()
+  if (!b.found) throw new Error('Blender is not set up yet. Open the Blender tab to get it.')
+  return b.path
+}
+let blenderDownload = null
+handle('blender:status', (force) => findBlender(force))
+handle('blender:download', async () => {
+  if (blenderDownload) throw new Error('Blender is already downloading')
+  blenderDownload = new AbortController()
+  try {
+    blenderInfo = await blender.download(app.getPath('userData'), { fetchImpl: net.fetch, signal: blenderDownload.signal, onProgress: (p) => send('blender:progress', p) })
+    return blenderInfo
+  } finally {
+    blenderDownload = null
+  }
+})
+handle('blender:cancelDownload', () => blenderDownload?.abort())
+handle('blender:pickPath', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Find blender.exe',
+    properties: ['openFile'],
+    filters: process.platform === 'win32' ? [{ name: 'Blender', extensions: ['exe'] }] : []
+  })
+  if (r.canceled) return findBlender()
+  const v = blender.versionOf(r.filePaths[0])
+  if (!v) throw new Error("That file didn't start as Blender.")
+  setSettings({ blender: { path: r.filePaths[0] } })
+  return findBlender(true)
+})
+
+let buildAbort = null
+async function buildAsset(id, commitMessage) {
+  const r = await library.build(id, { blenderPath: requireBlender(), runner: runnerPy(), signal: modelAbort?.signal || buildAbort?.signal, commitMessage })
+  send('library:changed', { id })
+  return r
+}
+const assetView = (id) => {
+  const f = library.files(id)
+  return {
+    meta: library.readMeta(id),
+    script: library.readScript(id),
+    glb: f['model.glb'] ? new Uint8Array(f['model.glb']) : null,
+    preview: f['preview.png'] ? `data:image/png;base64,${f['preview.png'].toString('base64')}` : null,
+    chat: library.loadChat(id)
+  }
+}
+handle('library:status', () => library.status())
+handle('library:list', () =>
+  library.list().map((a) => {
+    const p = library.files(a.id)['preview.png']
+    return { ...a, preview: p ? `data:image/png;base64,${p.toString('base64')}` : null }
+  })
+)
+handle('library:create', async (name, description) => (await library.create(name, description)).id)
+handle('library:get', (id) => assetView(id))
+handle('library:saveScript', async (id, code) => {
+  library.writeScript(id, code)
+})
+handle('library:build', async (id) => {
+  buildAbort = new AbortController()
+  try {
+    return await buildAsset(id, 'Edited the script')
+  } finally {
+    buildAbort = null
+  }
+})
+handle('library:rename', (id, name) => library.rename(id, name))
+handle('library:remove', (id) => library.remove(id))
+handle('library:reveal', (id) => shell.openPath(id ? join(library.dir(), id) : library.dir()))
+handle('library:clearChat', (id) => library.saveChat(id, []))
+handle('library:addToGame', async (id) => {
+  const { dir } = requireProject()
+  const rec = assets.addFromLibrary(dir, id)
+  await git.commitAll(dir, `Added ${rec.name} from my library`)
+  return rec
+})
+handle('library:connectGitHub', (opts) => library.connectGitHub(opts))
+handle('library:sync', () => library.sync())
+
+let modelAbort = null
+handle('model:stop', () => modelAbort?.abort())
+handle('model:run', async (id, userText) => {
+  if (modelAbort) throw new Error('The AI is already working on a model')
+  requireBlender()
+  const ai = getSettings().ai
+  const history = library.loadChat(id)
+  modelAbort = new AbortController()
+  const steps = []
+  const emit = (ev) => {
+    if (ev.type === 'tool_start') steps.push({ id: ev.id, name: ev.name, path: '', ok: null })
+    if (ev.type === 'tool_end') {
+      const s = steps.find((x) => x.id === ev.id)
+      if (s) s.ok = ev.ok
+    }
+    send('model:event', { ...ev, assetId: id })
+  }
+  history.push({ role: 'user', content: userText, time: Date.now() })
+  library.saveChat(id, history)
+  await localCommit('Your edits (before AI)')
+  try {
+    const result = await runModelAgent({
+      id,
+      ai,
+      history: history.slice(0, -1),
+      userText,
+      emit,
+      signal: modelAbort.signal,
+      build: () => buildAsset(id, false)
+    })
+    const oid = await localCommit(`AI: ${userText.replace(/\s+/g, ' ').slice(0, 72)}`)
+    history.push({ role: 'assistant', content: result.reply, time: Date.now(), build: result.build ? { ok: result.build.ok, error: result.build.error } : null, commit: oid, steps })
+    library.saveChat(id, history)
+    emit({ type: 'done', reply: result.reply, commit: oid })
+    return { reply: result.reply, steps }
+  } catch (e) {
+    await localCommit(`AI (stopped): ${userText.slice(0, 60)}`).catch(() => null)
+    history.push({ role: 'assistant', content: `⚠ ${e.message}`, time: Date.now(), error: true, steps })
+    library.saveChat(id, history)
+    emit({ type: 'error', message: e.message })
+    throw e
+  } finally {
+    modelAbort = null
+  }
+})
+const localCommit = (msg) => git.commitAll(library.dir(), msg)
+
 handle('open:url', (url) => /^https:\/\//.test(url) && shell.openExternal(url))
 
 // ---------- app lifecycle ----------
@@ -480,6 +622,7 @@ app.whenReady().then(async () => {
   assets.configure({ cache: join(app.getPath('userData'), 'asset-cache') })
   assets.polyPizza.configureKeyStore(stores.polypizza)
   deploy.configureRenderStore(stores.render)
+  library.configure(getSettings().libraryDir)
   createWindow()
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
 })

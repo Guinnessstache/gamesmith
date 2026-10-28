@@ -9,6 +9,12 @@ function buildUrl(preset, host, port, presets) {
 export default function Settings({ settings, presets, onClose, onSaved }) {
   const [ai, setAi] = useState({ ...settings.ai })
   const [projectsDir, setProjectsDir] = useState(settings.projectsDir)
+  const [libraryDir, setLibraryDir] = useState(settings.libraryDir)
+  const [blenderPath, setBlenderPath] = useState(settings.blender?.path || '')
+  const [blenderFound, setBlenderFound] = useState(null)
+  useEffect(() => {
+    window.gs.blender.status().then(setBlenderFound).catch(() => {})
+  }, [])
   const [clientId, setClientId] = useState(settings.github?.clientId || '')
   const [account, setAccount] = useState(undefined)
   const [ppConnected, setPpConnected] = useState(null)
@@ -62,7 +68,7 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
   }
 
   const save = async () => {
-    await window.gs.settings.set({ ai, projectsDir, github: { clientId: clientId.trim() } })
+    await window.gs.settings.set({ ai, projectsDir, libraryDir, blender: { path: blenderPath.trim() }, github: { clientId: clientId.trim() } })
     onSaved()
   }
 
@@ -212,6 +218,32 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
             onClick={async () => {
               const p = await window.gs.settings.pickFolder()
               if (p) setProjectsDir(p)
+            }}
+          >
+            Choose…
+          </button>
+        </div>
+
+        <h3>Blender and your 3D models</h3>
+        <div className="field-row">
+          <label className="field grow">
+            <span>Blender program (leave empty to find it automatically)</span>
+            <input value={blenderPath} onChange={(e) => setBlenderPath(e.target.value)} placeholder={blenderFound?.found ? blenderFound.path : 'C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe'} />
+          </label>
+        </div>
+        <span className="muted small">
+          {blenderFound?.found ? `Using Blender ${blenderFound.version}.` : 'Blender not found yet. The Blender tab can download it for you.'} Any Blender 4.2 or newer works, including forks built on it.
+        </span>
+        <div className="field-row">
+          <label className="field grow">
+            <span>Folder for your model library</span>
+            <input value={libraryDir} onChange={(e) => setLibraryDir(e.target.value)} />
+          </label>
+          <button
+            className="btn ghost"
+            onClick={async () => {
+              const p = await window.gs.settings.pickFolder()
+              if (p) setLibraryDir(p)
             }}
           >
             Choose…

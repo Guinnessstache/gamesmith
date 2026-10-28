@@ -5,6 +5,8 @@
 //   npm run build
 //   xvfb-run -a npx electron --no-sandbox scripts/smoke-electron.cjs <screenshotDir>
 const { app, BrowserWindow } = require('electron')
+const FAKE_BLENDER = process.env.GAMESMITH_BLENDER || require('node:path').join(__dirname, 'fake-blender.py')
+process.env.GAMESMITH_BLENDER = '/no/blender/here' // start without Blender to see the setup screen
 const http = require('node:http')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -44,7 +46,20 @@ const script = [
   { tool: { name: 'search_assets', args: { query: 'crate', type: 'models' } } },
   { tool: { name: 'add_asset', args: { id: 'wooden_crate_01', type: 'models' } } },
   { tool: { name: 'add_asset', args: { id: 'kloofendal_48d_partly_cloudy_puresky', type: 'hdris' } } },
-  { text: 'Added a wooden crate and a cloudy sky.' }
+  { text: 'Added a wooden crate and a cloudy sky.' },
+  // Third request: the modeling AI in the Blender tab.
+  {
+    tool: {
+      name: 'write_script',
+      args: {
+        content:
+          'bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.25))\nbody = bpy.context.object\nbody.name = "Body"\nbody.scale = (0.8, 0.5, 0.5)\nassign(body, mat("Wood", (0.45, 0.28, 0.14), roughness=0.8))\n' +
+          'bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.25, depth=0.8, location=(0, 0, 0.5), rotation=(0, math.radians(90), 0))\nlid = bpy.context.object\nlid.name = "Lid"\nassign(shade_smooth(lid), mat("Gold", (0.85, 0.65, 0.2), roughness=0.3, metallic=1.0))\n'
+      }
+    }
+  },
+  { tool: { name: 'build_model', args: {} } },
+  { text: 'A wooden chest with a rounded gold lid, 0.8 m wide.' }
 ]
 let turn = 0
 const requests = []
@@ -101,7 +116,7 @@ mock.listen(0, '127.0.0.1', async () => {
   fs.mkdirSync(path.join(tmp, 'userData'), { recursive: true })
   fs.writeFileSync(
     path.join(tmp, 'userData', 'settings.json'),
-    JSON.stringify({ projectsDir, ai: { preset: 'custom', baseUrl: `http://127.0.0.1:${port}/v1`, model: 'qwen-coder-mock:32b', host: 'Mac-Studio.local', port: 11434 }, github: { clientId: 'Ov23-test' } })
+    JSON.stringify({ projectsDir, libraryDir: path.join(tmp, 'Gamesmith Library'), ai: { preset: 'custom', baseUrl: `http://127.0.0.1:${port}/v1`, model: 'qwen-coder-mock:32b', host: 'Mac-Studio.local', port: 11434 }, github: { clientId: 'Ov23-test' } })
   )
 
   require(path.join(__dirname, '..', 'out', 'main', 'index.js'))
@@ -147,6 +162,19 @@ mock.listen(0, '127.0.0.1', async () => {
     win.webContents.reload()
     await waitFor('.project-card:not(.new)')
     await shot('3-home-with-games')
+
+    // My 3D models before Blender is set up
+    await js(`document.querySelector('.studio-card').click()`)
+    check(await waitFor('.blender-setup', 10000), 'setup screen shown when Blender is missing')
+    const setupW = await js(`document.querySelector('.blender-setup').getBoundingClientRect().width`)
+    const centerW = await js(`document.querySelector('.studio-page .center').getBoundingClientRect().width`)
+    check(setupW >= 500 && centerW > 900, `setup screen uses the full center area (${Math.round(centerW)} px wide)`)
+    await shot('3b-blender-setup')
+    process.env.GAMESMITH_BLENDER = FAKE_BLENDER
+    await js(`[...document.querySelectorAll('.blender-setup button')].find(b => b.textContent === 'Check again').click()`)
+    check(await waitFor('.lib-head', 20000), '"Check again" finds Blender once it is installed')
+    await js(`document.querySelector('.back').click()`)
+    await waitFor('.project-card:not(.new)')
 
     // Open the 3D game first to check it renders
     await openGame('Marble Run')
@@ -207,7 +235,7 @@ mock.listen(0, '127.0.0.1', async () => {
     // ---- Publish flow ----
     const setInput = (sel, value) => js(`(() => {
       const el = document.querySelector(${JSON.stringify(sel)});
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set;
       setter.call(el, ${JSON.stringify(value)});
       el.dispatchEvent(new Event('input', { bubbles: true }));
     })()`)
@@ -380,9 +408,71 @@ mock.listen(0, '127.0.0.1', async () => {
     const errs = await js(`(() => { document.querySelector('.console-toggle').click(); return new Promise(r => setTimeout(() => r([...document.querySelectorAll('.log.error')].map(e => e.textContent.slice(0, 160))), 300)) })()`)
     if (process.env.SHOW_ERRORS) console.log('PREVIEW ERRORS:\n  ' + errs.join('\n  '))
 
+    // ---- Blender tab: make a model with AI, add it to the game, back it up ----
+    await js(`document.querySelector('.blender-tab').click()`)
+    check(await waitFor('.lib-head', 15000), 'Blender tab opens (Blender found)')
+    const libDir = path.join(tmp, 'Gamesmith Library')
+    await shot('22-blender-empty')
+    await js(`document.querySelector('.lib-head .btn.play').click()`)
+    await waitFor('.modal input')
+    await setInput('.modal input', 'Treasure Chest')
+    await js(`document.querySelector('.modal .btn.play').click()`)
+    check(await waitFor('.lib-item.on', 10000), 'new library asset created and selected')
+    await sleep(500)
+    const modelChatHead = await js(`document.querySelector('.right > .chat h2')?.textContent`)
+    check(modelChatHead === 'Model with AI', 'right panel switches to the modeling chat')
+    await setInput('.right > .chat .chat-input textarea', 'A wooden treasure chest with a gold lid')
+    await js(`document.querySelector('.right > .chat .chat-input .btn.ai').click()`)
+    check(await waitFor('.right > .chat .msg.ai:not(.live) .msg-text', 120000), 'modeling AI finished')
+    const modelReq = requests.at(-1)
+    check(modelReq.tools.map((t) => t.function.name).join(',') === 'read_script,write_script,edit_script,build_model', 'modeling AI has the Blender tools')
+    check(fs.existsSync(path.join(libDir, 'treasure-chest', 'model.glb')) && fs.existsSync(path.join(libDir, 'treasure-chest', 'preview.png')), 'Blender built model.glb and preview.png')
+    check(await waitFor('.asset-detail .stats', 10000), 'measurements shown')
+    const statsText = await js(`document.querySelector('.asset-detail .stats').innerText`)
+    check(/0\.8 × 0\.5 m/.test(statsText) && /Gold/.test(statsText), `size and materials shown (${statsText.replace(/\n/g, ' ')})`)
+    const viewerOk = await waitFor('.viewer canvas, .viewer.fallback img', 10000)
+    check(viewerOk, 'model shows in the 3D view (or the rendered image without WebGL)')
+    await sleep(1200)
+    await shot('23-blender-model')
+    await js(`[...document.querySelectorAll('.asset-view .seg button')].find(b => b.textContent === 'Render').click()`)
+    await sleep(500)
+    await shot('24-blender-render')
+    await js(`[...document.querySelectorAll('.asset-view .seg button')].find(b => b.textContent.startsWith('Script')).click()`)
+    check(await waitFor('.asset-stage .monaco-editor', 15000), 'script opens in the code editor')
+    await shot('25-blender-script')
+    await js(`[...document.querySelectorAll('.asset-detail .btn.play')].find(b => b.textContent.startsWith('Add to')).click()`)
+    await sleep(1500)
+    check(fs.existsSync(path.join(marble, 'assets/models/treasure-chest/treasure-chest.glb')), 'Add to Marble Run copied the model into the game')
+    check(/My library/.test(fs.readFileSync(path.join(marble, 'assets/ASSETS.json'), 'utf8')), 'game manifest records it as from my library')
+    await js(`document.querySelector('.lib-foot .btn').click()`)
+    const backedUp = await (async () => {
+      for (let i = 0; i < 100; i++) {
+        const t = await js(`document.querySelector('.lib-foot')?.innerText || ''`)
+        if (/Saved to Guinnessstache\/gamesmith-assets/.test(t)) return true
+        await sleep(200)
+      }
+      return false
+    })()
+    check(backedUp, 'library backed up to a gamesmith-assets repo')
+    const remoteLib = require('node:child_process').execFileSync('git', ['--git-dir', path.join(tmp, 'remote', 'gamesmith-assets.git'), 'ls-tree', '-r', '--name-only', 'main'], { encoding: 'utf8' })
+    check(/treasure-chest\/model\.glb/.test(remoteLib) && /treasure-chest\/model\.py/.test(remoteLib) && !/\.gamesmith/.test(remoteLib), 'GitHub has the model, script and preview (not chats)')
+    await shot('26-blender-backed-up')
+    await js(`document.querySelector('.game-tab').click()`)
+    const gameChatVisible = await js(`!document.querySelector('.chat-slot').hidden`)
+    check(gameChatVisible, 'game chat comes back on the Game tab')
+
+    // The library on its own, from the home screen
+    await js(`document.querySelector('.back').click()`)
+    await waitFor('.studio-card')
+    await js(`document.querySelector('.studio-card').click()`)
+    check(await waitFor('.lib-item', 10000), 'My 3D models opens from the home screen')
+    await shot('27-studio-page')
+    await js(`document.querySelector('.back').click()`)
+    await waitFor('.project-card:not(.new)')
+
     // ---- Bring in an existing game with its own server ----
     if (process.env.SC_REPO) {
-      await js(`document.querySelector('.back').click()`)
+      await js(`document.querySelector('.back')?.click()`)
       await waitFor('.project-card.import')
       await js(`document.querySelector('.project-card.import').click()`)
       await waitFor('.repo-pick li, .modal.wide')

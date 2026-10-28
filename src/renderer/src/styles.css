@@ -321,3 +321,57 @@ a { color: var(--cyan); }
 .server-chip.crashed .dot, .server-chip.stopped .dot { background: var(--bad); }
 .log.server { color: #b9c6dc; }
 .log-src { display: inline-block; font-size: 10.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-right: 8px; }
+
+/* ---------- Blender tab / my 3D models ---------- */
+/* violet = Blender modeling, distinct from amber (game) and cyan (AI) */
+:root { --violet: #b69cff; --violet-ink: #1b1036; }
+.blender-tab.on { color: var(--violet); }
+.studio-card .plus, .studio-glyph { color: var(--violet); }
+.studio-glyph { font-size: 20px; }
+.chat-slot { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-slot[hidden] { display: none; }
+.studio { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--ink); }
+.studio-body { flex: 1; min-height: 0; display: flex; }
+.lib { width: 230px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
+.lib-head { display: flex; align-items: center; padding: 10px 10px 8px; }
+.lib-head h3 { font-size: 15px; }
+.lib-list { flex: 1; overflow: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+.lib-item { display: flex; gap: 10px; align-items: center; width: 100%; padding: 6px; border-radius: 9px; border: 1.5px solid transparent; background: none; cursor: pointer; text-align: left; }
+.lib-item:hover { background: var(--raised); }
+.lib-item.on { border-color: var(--violet); background: var(--raised); }
+.lib-item img, .lib-thumb { width: 48px; height: 48px; border-radius: 6px; flex: none; object-fit: cover; background: var(--raised-2); }
+.lib-thumb { display: grid; place-items: center; color: var(--faint); }
+.lib-text { display: flex; flex-direction: column; min-width: 0; }
+.lib-foot { border-top: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.studio-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.studio-empty { flex: 1; display: grid; place-items: center; padding: 24px; text-align: center; }
+.asset-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.asset-view-body { flex: 1; min-height: 0; display: flex; }
+.asset-stage { position: relative; flex: 1; min-width: 0; display: flex; }
+.asset-stage > * { flex: 1; }
+.seg.inline { margin: 0; }
+.seg.inline button { padding: 4px 12px; }
+.check-label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+.check-label input { width: auto; }
+.viewer { position: relative; min-height: 0; overflow: hidden; }
+.viewer canvas { display: block; }
+.viewer.fallback { display: grid; place-items: center; }
+.viewer.fallback img { max-width: 92%; max-height: 92%; border-radius: 10px; }
+.viewer-msg { position: absolute; left: 12px; right: 12px; bottom: 12px; margin: 0; }
+.build-error { position: absolute; left: 12px; right: 12px; bottom: 12px; flex: none; background: var(--panel); border-radius: 10px; }
+.stats { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 4px 0; font-size: 13px; }
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; }
+.detail-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn.danger:hover:not(:disabled) { color: var(--bad); border-color: rgba(255, 114, 114, 0.5); }
+.blender-setup { max-width: 560px; margin: auto; padding: 32px; display: flex; flex-direction: column; gap: 14px; }
+.blender-setup p { margin: 0; color: var(--muted); }
+.blender-setup p strong { color: var(--text); }
+.setup-mark { font-size: 34px; color: var(--violet); line-height: 1; }
+.setup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.progress-block { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.progress { flex: 1; min-width: 220px; height: 8px; background: var(--raised); border-radius: 999px; overflow: hidden; }
+.progress span { display: block; height: 100%; background: var(--violet); transition: width 0.25s; }
+
+.ws-body.studio-page { grid-template-columns: minmax(0, 1fr) 400px; }
+.blender-setup .notice { margin-bottom: 0; }

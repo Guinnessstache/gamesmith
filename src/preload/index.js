@@ -88,6 +88,34 @@ contextBridge.exposeInMainWorld('gs', {
     remove: (id) => call('assets:remove', id),
     onProgress: (fn) => on('assets:progress', fn)
   },
+  blender: {
+    status: (force) => call('blender:status', force),
+    download: () => call('blender:download'),
+    cancelDownload: () => call('blender:cancelDownload'),
+    pickPath: () => call('blender:pickPath'),
+    onProgress: (fn) => on('blender:progress', fn)
+  },
+  library: {
+    status: () => call('library:status'),
+    list: () => call('library:list'),
+    create: (name, description) => call('library:create', name, description),
+    get: (id) => call('library:get', id),
+    saveScript: (id, code) => call('library:saveScript', id, code),
+    build: (id) => call('library:build', id),
+    rename: (id, name) => call('library:rename', id, name),
+    remove: (id) => call('library:remove', id),
+    reveal: (id) => call('library:reveal', id),
+    clearChat: (id) => call('library:clearChat', id),
+    addToGame: (id) => call('library:addToGame', id),
+    connectGitHub: (opts) => call('library:connectGitHub', opts),
+    sync: () => call('library:sync'),
+    onChanged: (fn) => on('library:changed', fn)
+  },
+  model: {
+    run: (id, text) => call('model:run', id, text),
+    stop: () => call('model:stop'),
+    onEvent: (fn) => on('model:event', fn)
+  },
   openUrl: (url) => call('open:url', url),
   git: {
     log: () => call('git:log'),

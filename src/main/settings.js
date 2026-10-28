@@ -27,6 +27,8 @@ const DEFAULTS = {
   },
   projectsDir: '',
   externalProjects: [], // game folders opened from elsewhere on this computer
+  libraryDir: '', // your own asset library (Documents/Gamesmith Library by default)
+  blender: { path: '' }, // empty = find it automatically
   // Client ID of a GitHub OAuth App with Device Flow enabled. Public value, not a secret.
   github: { clientId: '' }
 }
@@ -52,6 +54,7 @@ export function getSettings() {
   }
   cache = merge(DEFAULTS, saved)
   if (!cache.projectsDir) cache.projectsDir = join(app.getPath('documents'), 'Gamesmith Projects')
+  if (!cache.libraryDir) cache.libraryDir = join(app.getPath('documents'), 'Gamesmith Library')
   return cache
 }
 

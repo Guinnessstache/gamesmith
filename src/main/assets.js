@@ -12,6 +12,7 @@ import { join, dirname, posix } from 'node:path'
 import { unzipSync } from 'fflate'
 import * as files from './projects.js'
 import * as pp from './polypizza.js'
+import * as library from './library.js'
 
 const API = () => process.env.GAMESMITH_POLYHAVEN_API || 'https://api.polyhaven.com'
 export const USER_AGENT = 'Gamesmith/0.3 (+https://github.com/Guinnessstache)'
@@ -115,6 +116,21 @@ export async function search(query, type = 'models', limit = 48, source = 'polyh
 export async function searchAllModels(query, limit = 12) {
   const out = []
   const errors = []
+  try {
+    out.push(
+      ...library.search(query).slice(0, limit).map((a) => ({
+        id: `lib-${a.id}`,
+        name: a.name,
+        source: 'mine',
+        category: 'Your library',
+        license: a.license || 'Own work',
+        tags: a.tags || [],
+        size_m: a.stats?.size_m
+      }))
+    )
+  } catch {
+    /* no library yet */
+  }
   try {
     out.push(...(await search(query, 'models', limit, 'polyhaven')))
   } catch (e) {
@@ -269,9 +285,35 @@ function ensureAddon(projectDir, resourcesDir, rel) {
 
 const fileSlug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'model'
 
-/** Download any library asset (Poly Haven or Poly Pizza) into the game. */
+/** Add any asset (Poly Haven, Poly Pizza, or your own library) to the game. */
 export async function addAsset(projectDir, opts) {
+  if (opts.id.startsWith('lib-')) return addFromLibrary(projectDir, opts.id.slice(4))
   return opts.id.startsWith('pp-') ? addPolyPizza(projectDir, opts) : addPolyHaven(projectDir, opts)
+}
+
+/** Copy a model from your own asset library into the game. */
+export function addFromLibrary(projectDir, libId) {
+  const meta = library.readMeta(libId)
+  const { 'model.glb': glb } = library.files(libId)
+  if (!glb) throw new Error(`"${meta.name}" hasn't been built yet. Open it in the Blender tab and build it first.`)
+  const entry = `assets/models/${libId}/${libId}.glb`
+  files.writeBinary(projectDir, entry, glb)
+  const record = {
+    id: `lib-${libId}`,
+    name: meta.name,
+    type: 'models',
+    source: 'My library',
+    license: meta.license || 'Own work',
+    authors: [],
+    ownModel: true,
+    size_m: meta.stats?.size_m,
+    entry,
+    files: [entry],
+    bytes: glb.length,
+    added: new Date().toISOString()
+  }
+  upsert(projectDir, record)
+  return record
 }
 
 async function addPolyPizza(projectDir, { id, onProgress = () => {} }) {
@@ -413,6 +455,12 @@ export function usageHint(record, template) {
   const three = template === 'three-3d'
   switch (record.type) {
     case 'models':
+      if (record.ownModel) {
+        const sz = record.size_m ? ` Size: ${record.size_m.width} x ${record.size_m.depth} m, ${record.size_m.height} m tall.` : ''
+        return three
+          ? `GLTFLoader from 'three/addons/loaders/GLTFLoader.js': new GLTFLoader().load('${record.entry}', (g) => scene.add(g.scene)). Made in the user's asset library: real-world meters, origin at the bottom center (sits on y = 0).${sz}`
+          : `3D model (.glb); not usable in a 2D Phaser game.`
+      }
       if (record.lowPoly) {
         return three
           ? `GLTFLoader from 'three/addons/loaders/GLTFLoader.js': new GLTFLoader().load('${record.entry}', (g) => scene.add(g.scene)). Low-poly model with arbitrary scale: measure it with new THREE.Box3().setFromObject(g.scene) and scale it to the size you want.${record.animated ? ' Has animations: play g.animations with THREE.AnimationMixer.' : ''}`

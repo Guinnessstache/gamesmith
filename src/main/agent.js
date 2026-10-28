@@ -123,7 +123,7 @@ RULES FOR EDITING
 7. When finished, reply with 2-4 plain sentences: what changed and how to try it. Do not paste code in your reply.
 
 ASSETS
-- Ready-made free assets: search_assets then add_asset. Types: models (3D props, nature, vehicles, characters), textures (tileable surfaces), hdris (3D skies + lighting). Prefer one consistent style per game: realistic (Poly Haven) or low-poly (pp- ids).${meta.template === 'phaser-2d' ? ' This is a 2D game: only textures are useful from Poly Haven (as tiled backgrounds/ground). Prefer art drawn with code, or packs the user imported.' : ''}
+- Ready-made assets: search_assets then add_asset. Results starting with lib- are models the user made in their own library; prefer those when they fit. Types: models (3D props, nature, vehicles, characters), textures (tileable surfaces), hdris (3D skies + lighting). Prefer one consistent style per game: realistic (Poly Haven) or low-poly (pp- ids).${meta.template === 'phaser-2d' ? ' This is a 2D game: only textures are useful from Poly Haven (as tiled backgrounds/ground). Prefer art drawn with code, or packs the user imported.' : ''}
 - Only use asset files that exist. After add_asset, use the exact paths it returns.
 - Assets already in this game:
 ${assets.catalogForAI(projectDir, meta.template)}
@@ -252,7 +252,7 @@ export const TOOLS = [
   }
 ]
 
-function parseArgs(raw) {
+export function parseArgs(raw) {
   if (raw && typeof raw === 'object') return raw
   const s = String(raw || '').trim()
   if (!s) return {}
@@ -399,7 +399,7 @@ export async function runAgent({ projectDir, meta, ai, preview, history = [], us
         const results = type === 'models' ? await assets.searchAllModels(args.query, 10) : await assets.search(args.query, type, 12)
         if (!results.length) return 'No matches. Try a simpler or different word.'
         return results
-          .map((a) => `${a.id} | ${a.name} | ${a.source === 'polypizza' ? `low-poly, ${a.license}` : `${a.category}, CC0`}${a.tags.length ? ` | tags: ${a.tags.slice(0, 6).join(', ')}` : ''}`)
+          .map((a) => `${a.id} | ${a.name} | ${a.source === 'mine' ? "user's own model (prefer these)" : a.source === 'polypizza' ? `low-poly, ${a.license}` : `${a.category}, CC0`}${a.tags.length ? ` | tags: ${a.tags.slice(0, 6).join(', ')}` : ''}`)
           .join('\n')
       }
       case 'add_asset': {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Home from './components/Home.jsx'
 import Workspace from './components/Workspace.jsx'
 import Settings from './components/Settings.jsx'
+import StudioPage from './components/StudioPage.jsx'
 
 export default function App() {
   const [settings, setSettings] = useState(null)
@@ -9,6 +10,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [project, setProject] = useState(null) // { dir, meta, url, chat }
   const [error, setError] = useState('')
+  const [studio, setStudio] = useState(false)
 
   const loadSettings = useCallback(async () => {
     const r = await window.gs.settings.get()
@@ -47,8 +49,10 @@ export default function App() {
           onClose={closeProject}
           onOpenSettings={() => setShowSettings(true)}
         />
+      ) : studio ? (
+        <StudioPage settings={settings} onClose={() => setStudio(false)} onOpenSettings={() => setShowSettings(true)} />
       ) : (
-        <Home settings={settings} onOpen={openProject} onOpenSettings={() => setShowSettings(true)} error={error} />
+        <Home settings={settings} onOpen={openProject} onOpenStudio={() => setStudio(true)} onOpenSettings={() => setShowSettings(true)} error={error} />
       )}
       {showSettings && (
         <Settings

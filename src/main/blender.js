@@ -167,11 +167,12 @@ export async function download(userDataDir, { onProgress = () => {}, signal, fet
  * Run an asset script. Returns { ok, stats } or { ok:false, error, where, log }.
  * runner.py prints one line starting with GAMESMITH_RESULT.
  */
-export function run({ blender, runner, script, outGlb, outPng = '-', size = 384, timeoutMs = 180000, signal }) {
+export function run({ blender, runner, script, outGlb, outPng = '-', size = 384, timeoutMs = 180000, signal, motionsDir }) {
   return new Promise((resolve) => {
     fs.mkdirSync(dirname(outGlb), { recursive: true })
     const args = ['-b', '--factory-startup', '--python-exit-code', '3', '--python', runner, '--', script, outGlb, outPng, String(size)]
-    const child = spawn(blender, args, { windowsHide: true })
+    const env = { ...process.env, ...(motionsDir ? { GAMESMITH_MOTIONS: motionsDir } : {}) }
+    const child = spawn(blender, args, { windowsHide: true, env })
     let out = ''
     const take = (d) => {
       out += d.toString()

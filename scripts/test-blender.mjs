@@ -173,6 +173,30 @@ ok(/GLTFLoader/.test(assets.usageHint(rec, 'three-3d')) && /0\.82/.test(assets.u
   ok(/AnimationMixer/.test(hint) && /"Walk"/.test(hint) && /LoopOnce/.test(hint), 'game AI is told the clip names and how to play them')
 }
 
+// ---- recorded motions: retargeting accuracy, and saving motions in the library ----
+{
+  const motions = library.motionsRoot()
+  fs.mkdirSync(motions, { recursive: true })
+  const rt = await blender.run({ blender: exe, runner, script: join(root, 'scripts/fixtures/mocap-roundtrip.py'), outGlb: join(tmp, 'rt.glb'), outPng: '-', motionsDir: motions })
+  const resFile = join(motions, 'roundtrip-result.json')
+  const res = fs.existsSync(resFile) ? JSON.parse(fs.readFileSync(resFile, 'utf8')) : { error: rt.error }
+  fs.rmSync(resFile, { force: true })
+  ok(rt.ok && res.worst_deg <= 3, `a posed skeleton turned into landmarks and back matches within ${res.worst_deg} degrees on every bone`)
+  ok(Math.abs(res.lift - 0.1) < 0.01, 'hip lift (jumps, crouches) carried over')
+  ok(rt.stats?.humanoid === true, 'build reports a person-shaped skeleton')
+  fs.rmSync(join(motions, 'roundtrip'), { recursive: true, force: true })
+
+  const frames = Array.from({ length: 10 }, (_, k) => ({ w: Array.from({ length: 33 }, () => [0.1 * k, -0.5, 0.01, 0.9]), i: Array.from({ length: 33 }, () => [0.5, 0.5, 0.9]), lift: 0 }))
+  const saved = await library.saveMotion({ name: 'Wave', fps: 24, loop: true, legLength: 0.82, frames }, { bytes: new Uint8Array([1, 2, 3]), ext: 'webm' })
+  ok(saved.name === 'Wave' && saved.frames === 10 && saved.video === 'video.webm', 'motion saved with its video')
+  await assert.rejects(library.saveMotion({ name: 'wave', fps: 24, frames }), /already have a motion/)
+  ok(library.listMotions().length === 1 && library.list().every((a) => a.id !== 'motions'), 'motions listed separately from models')
+  const files = await (await import('isomorphic-git')).default.listFiles({ fs, dir: library.dir() })
+  ok(files.includes('motions/wave/motion.json') && !files.some((f) => f.startsWith('motions/wave/video')), 'the motion is versioned (and backed up), the video of you stays on this computer')
+  await library.removeMotion(saved.id)
+  ok(library.listMotions().length === 0, 'motion removed')
+}
+
 // ---- downloading portable Blender: blocked server, then a good mirror; checksum enforced ----
 {
   const { execFileSync } = await import('node:child_process')

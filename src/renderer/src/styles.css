@@ -384,3 +384,27 @@ a { color: var(--cyan); }
 .clip { border: 1px solid var(--line); background: rgba(18, 24, 35, 0.85); color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
 .clip:hover { border-color: var(--violet); }
 .clip.on { background: var(--violet); color: var(--violet-ink); border-color: var(--violet); font-weight: 600; }
+
+/* ---------- motions ---------- */
+.lib-seg { margin: 10px 10px 0; }
+.motion-thumb { position: relative; background: #11161f; }
+.mini-figure { width: 48px; height: 48px; display: block; }
+.mocap-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mocap-center { max-width: 560px; margin: auto; padding: 32px; display: flex; flex-direction: column; gap: 14px; }
+.mocap-center p { margin: 0; }
+.tips { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 4px; font-size: 13.5px; }
+.progress.wide { width: 100%; }
+.camera { position: relative; flex: 1; min-height: 0; background: #0b0f16; display: grid; place-items: center; overflow: hidden; }
+.camera video, .camera canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.camera .mirror { transform: scaleX(-1); }
+.countdown { position: relative; font: 700 120px/1 var(--display); color: var(--amber); text-shadow: 0 6px 30px rgba(0, 0, 0, 0.7); }
+.rec-dot { position: absolute; top: 12px; left: 12px; background: rgba(0, 0, 0, 0.6); color: #ff7272; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+.mocap-bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.review-controls { padding: 10px 12px; border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
+.trim-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.trim { display: flex; flex-direction: column; gap: 2px; min-width: 160px; flex: 1; }
+.trim input { padding: 0; }
+.time { min-width: 44px; align-self: center; }
+.review-controls select { width: auto; padding: 3px 6px; margin-left: 6px; }
+.review-controls .notice { margin: 0; padding: 6px 10px; }
+.figure-stage, .motion-video { width: 100%; height: 100%; display: block; background: #11161f; object-fit: contain; }

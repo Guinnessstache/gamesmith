@@ -8,6 +8,21 @@ import * as library from './library.js'
 
 const HISTORY_TURNS = 10
 
+function motionList() {
+  let list = []
+  try {
+    list = library.listMotions()
+  } catch {
+    /* no library */
+  }
+  if (!list.length) return 'The user has no recorded motions yet (they record them in the Motions section). Keyframe clips with rig.pose instead.'
+  return `The user's recorded motions (from videos of themselves) can become clips on a humanoid rig:
+  rig.apply_motion("Wave")                                     # clip named after the motion; plays once unless it was recorded as a loop
+  rig.apply_motion("Sword swing", clip="Attack", start=0.4, end=1.6, speed=1.2)   # rename, trim (seconds), speed up
+Available: ${list.map((m) => `"${m.name}" (${m.seconds} s${m.loop ? ', loops' : ''})`).join(', ')}.
+Prefer a recorded motion when the user asks for that move; you can mix them with keyframed clips.`
+}
+
 function systemPrompt(meta, script) {
   return `You are a 3D modeling assistant inside Gamesmith. You build game-ready 3D models by writing a Blender ${'5.x'} Python script (bpy).
 The asset is "${meta.name}"${meta.description ? `: ${meta.description}` : ''}.
@@ -61,6 +76,16 @@ Rules:
   A lid hinged at the back opens with a negative X rotation. move is meters along world axes. scale is a number.
 - Times are in seconds; keep loops short (0.6 to 1.2 s for walk cycles). Use clear names games can use: Idle, Walk, Run, Jump, Attack, Die, Open, Close, Spin.
 - After build_model, check the clip list in the result.
+
+PEOPLE AND RECORDED MOTIONS
+For any person-shaped character (knight, hero, villager, robot with arms and legs), use the standard skeleton,
+which recorded motions need:
+  rig = Rig.humanoid(height=1.8)   # bones: Hips, Spine, Chest, Neck, Head, UpperArm/LowerArm/Hand.L/.R, UpperLeg/LowerLeg/Foot.L/.R
+  rig.limb("UpperArm.L", width=0.12, material=steel)        # a box from the bone's head to its tail, attached to it
+  rig.limb("LowerLeg.R", width=0.11, material=dark, shape="cylinder", extend=0.02)
+  head_pos, tail_pos = rig.joints["Head"]                    # place other parts (helmet, sword...) and rig.attach(part, "Hand.R")
+.L is the character's left (+X). It stands on z = 0 facing -Y with arms down. Build every body part this way, then add clips.
+${motionList()}
 
 Work in small steps: change the script, call build_model, read the numbers (is the size right? is min_z 0?), then improve.
 When done, briefly tell the user what you made in plain words (one or two sentences). Don't paste the script.

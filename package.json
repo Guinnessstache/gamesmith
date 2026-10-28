@@ -1,6 +1,6 @@
 {
   "name": "gamesmith",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Build browser games by describing them, with a local AI, GitHub saving, one-click hosting and Blender-made 3D models.",
   "main": "out/main/index.js",
   "scripts": {
@@ -13,15 +13,17 @@
     "test:agent": "node scripts/test-agent.mjs",
     "test:github": "node scripts/test-github.mjs",
     "test:assets": "node scripts/test-assets.mjs",
-    "test": "node scripts/test-agent.mjs && node scripts/test-assets.mjs && node scripts/test-github.mjs && node scripts/test-secrets.mjs && node scripts/test-import.mjs",
+    "test": "node scripts/test-agent.mjs && node scripts/test-assets.mjs && node scripts/test-github.mjs && node scripts/test-secrets.mjs && node scripts/test-import.mjs && node scripts/test-mocap.mjs",
     "test:secrets": "node scripts/test-secrets.mjs",
     "test:blender": "node scripts/test-blender.mjs",
-    "test:import": "node scripts/test-import.mjs"
+    "test:import": "node scripts/test-import.mjs",
+    "test:mocap": "node scripts/test-mocap.mjs"
   },
   "author": "Jason Thistle",
   "license": "MIT",
   "devDependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@mediapipe/tasks-vision": "^1.2.0",
     "@monaco-editor/react": "^4.7.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^45.1.0",

@@ -3,6 +3,7 @@ import ModelViewer from './ModelViewer.jsx'
 import CodeEditor from './CodeEditor.jsx'
 import { BuildBadge } from './ModelChat.jsx'
 import { timeAgo } from './ui.jsx'
+import { useMotions, MotionList, MotionMain } from './Motions.jsx'
 
 /** State shared by the Blender tab's center view and its AI chat. */
 export function useModelStudio() {
@@ -11,6 +12,7 @@ export function useModelStudio() {
   const [assetId, setAssetId] = useState(null)
   const [asset, setAsset] = useState(null)
   const [pendingPrompt, setPendingPrompt] = useState(null) // { id, text }: send to the AI once the new asset is open
+  const [section, setSection] = useState('models') // models | motions
 
   const refreshList = useCallback(async () => {
     const l = await window.gs.library.list()
@@ -49,11 +51,12 @@ export function useModelStudio() {
     await Promise.all([refreshList(), refreshAsset(assetId)])
   }, [refreshList, refreshAsset, assetId])
 
-  return { blender, setBlender, list, assetId, select: setAssetId, asset, refresh, refreshList, pendingPrompt, setPendingPrompt }
+  return { blender, setBlender, list, assetId, select: setAssetId, asset, refresh, refreshList, pendingPrompt, setPendingPrompt, section, setSection }
 }
 
 export default function BlenderStudio({ studio, project }) {
-  const { blender, list, assetId, select, asset, refresh, refreshList } = studio
+  const { blender, list, assetId, select, asset, refresh, refreshList, section, setSection } = studio
+  const motions = useMotions()
   const [view, setView] = useState('model') // model | image | script
   const [creating, setCreating] = useState(false)
 
@@ -64,6 +67,14 @@ export default function BlenderStudio({ studio, project }) {
     <div className="studio">
       <div className="studio-body">
         <aside className="lib">
+          <div className="seg lib-seg">
+            <button className={section === 'models' ? 'on' : ''} onClick={() => setSection('models')}>Models</button>
+            <button className={section === 'motions' ? 'on' : ''} onClick={() => setSection('motions')}>Motions</button>
+          </div>
+          {section === 'motions' ? (
+            <MotionList m={motions} />
+          ) : (
+            <>
           <div className="lib-head">
             <h3>My library</h3>
             <div className="spacer" />
@@ -85,11 +96,15 @@ export default function BlenderStudio({ studio, project }) {
               </button>
             ))}
           </div>
+            </>
+          )}
           <LibraryGitHub count={list?.length || 0} />
         </aside>
 
         <section className="studio-main">
-          {!asset ? (
+          {section === 'motions' ? (
+            <MotionMain m={motions} studio={studio} />
+          ) : !asset ? (
             <div className="studio-empty muted">{list?.length ? 'Pick a model on the left.' : 'Click + New to start your first model.'}</div>
           ) : (
             <AssetView key={asset.meta.id} asset={asset} view={view} setView={setView} project={project} onChanged={refresh} blender={blender} />

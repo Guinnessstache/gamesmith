@@ -15,7 +15,7 @@ import math
 import os
 import sys
 import traceback
-from mathutils import Euler, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 RESULT_TAG = "GAMESMITH_RESULT "
 
@@ -94,6 +94,106 @@ class Rig:
         self._bones = {}
         self._made = set()
         self._clip = None
+        self.is_humanoid = False
+
+    # --- a standard person-shaped skeleton (needed for recorded motions) ---
+    @classmethod
+    def humanoid(cls, height=1.8, name="Rig"):
+        """A person-shaped skeleton standing on the ground, facing -Y, arms down at the sides.
+        Bones: Hips, Spine, Chest, Neck, Head, UpperArm/LowerArm/Hand .L/.R, UpperLeg/LowerLeg/Foot .L/.R
+        (.L is the character's left, at +X). rig.joints["LowerArm.L"] gives (head, tail) positions."""
+        rig = cls(name)
+        k = height / 1.8
+        v = lambda x, y, z: (x * k, y * k, z * k)
+        rig.bone("Hips", v(0, 0, 0.95), v(0, 0, 1.05))
+        rig.bone("Spine", v(0, 0, 1.05), v(0, 0, 1.25), parent="Hips")
+        rig.bone("Chest", v(0, 0, 1.25), v(0, 0, 1.45), parent="Spine")
+        rig.bone("Neck", v(0, 0, 1.45), v(0, 0, 1.55), parent="Chest")
+        rig.bone("Head", v(0, 0, 1.55), v(0, 0, 1.8), parent="Neck")
+        for side, sx in (("L", 1), ("R", -1)):
+            rig.bone(f"UpperArm.{side}", v(0.19 * sx, 0, 1.42), v(0.2 * sx, 0, 1.13), parent="Chest")
+            rig.bone(f"LowerArm.{side}", v(0.2 * sx, 0, 1.13), v(0.21 * sx, 0, 0.88), parent=f"UpperArm.{side}")
+            rig.bone(f"Hand.{side}", v(0.21 * sx, 0, 0.88), v(0.21 * sx, 0, 0.78), parent=f"LowerArm.{side}")
+            rig.bone(f"UpperLeg.{side}", v(0.1 * sx, 0, 0.95), v(0.1 * sx, 0, 0.52), parent="Hips")
+            rig.bone(f"LowerLeg.{side}", v(0.1 * sx, 0, 0.52), v(0.1 * sx, 0.02, 0.09), parent=f"UpperLeg.{side}")
+            rig.bone(f"Foot.{side}", v(0.1 * sx, 0.02, 0.09), v(0.1 * sx, -0.12, 0.02), parent=f"LowerLeg.{side}")
+        rig.is_humanoid = True
+        return rig
+
+    @property
+    def joints(self):
+        """{bone name: (head, tail)} as Vectors, to place parts on the skeleton."""
+        return {n: (h.copy(), t.copy()) for n, (h, t, _) in self._bones.items()}
+
+    def limb(self, bone, width=0.1, depth=None, material=None, shape="box", extend=0.0, name=None):
+        """Make a part that spans a bone from head to tail (an upper arm, a shin...) and attach it.
+        shape: "box" or "cylinder". extend: extra length in meters at both ends (to hide gaps at joints)."""
+        if bone not in self._bones:
+            raise ValueError(f'rig.limb: no bone named "{bone}". Bones: {", ".join(self._bones)}')
+        head, tail, _ = self._bones[bone]
+        axis = tail - head
+        length = axis.length + 2 * extend
+        depth = width if depth is None else depth
+        if shape == "cylinder":
+            bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=width / 2, depth=1)
+            obj = bpy.context.object
+            obj.scale = (1, depth / width, length)
+        else:
+            bpy.ops.mesh.primitive_cube_add(size=1)
+            obj = bpy.context.object
+            obj.scale = (width, depth, length)
+        obj.name = name or bone
+        obj.rotation_mode = "QUATERNION"
+        obj.rotation_quaternion = axis.to_track_quat("Z", "Y")
+        obj.location = (head + tail) / 2
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+        if material is not None:
+            assign(obj, material)
+        return self.attach(obj, bone)
+
+    def apply_motion(self, motion, clip=None, loop=None, start=None, end=None, speed=1.0):
+        """Turn a motion recorded in Gamesmith (a video of a person) into a clip on this humanoid rig.
+        motion: its name in the library. clip: the clip name (default: the motion's name).
+        start/end: seconds within the recording. speed: 2.0 plays twice as fast."""
+        if not self.is_humanoid:
+            raise RuntimeError("Recorded motions need a person-shaped skeleton: make the rig with Rig.humanoid().")
+        data = load_motion(motion)
+        frames = data["frames"]
+        fps = float(data.get("fps", FPS)) * float(speed)
+        lo = int(round((start or 0) * fps))
+        hi = len(frames) if end is None else min(len(frames), int(round(end * fps)) + 1)
+        frames = frames[lo:hi]
+        if len(frames) < 2:
+            raise ValueError(f'Motion "{motion}" has no frames in that range.')
+        seconds = (len(frames) - 1) / fps
+        looping = bool(data.get("loop", False)) if loop is None else bool(loop)
+        self._build()
+        rests = {b.name: b.matrix_local.to_quaternion() for b in self.data.bones}
+        rest_dirs = {b.name: (b.tail_local - b.head_local).normalized() for b in self.data.bones}
+        legs = (self._bones["UpperLeg.L"][1] - self._bones["UpperLeg.L"][0]).length + (self._bones["LowerLeg.L"][1] - self._bones["LowerLeg.L"][0]).length
+        scale = legs / max(float(data.get("legLength", 0.85)), 0.2)
+        previous = {}
+        with self.clip(clip or data.get("name", motion), seconds=seconds, loop=looping):
+            for i, frame in enumerate(frames):
+                if not frame:
+                    continue
+                world = _humanoid_world_rotations(frame["w"], rest_dirs, previous, i)
+                at = round(i / fps * FPS)
+                for bone, w in world.items():
+                    parent = self.data.bones[bone].parent
+                    rel = (world[parent.name].inverted() @ w) if parent else w
+                    q = rests[bone].inverted() @ rel @ rests[bone]
+                    pb = self.obj.pose.bones[bone]
+                    last = previous.get("q:" + bone)
+                    if last is not None and last.dot(q) < 0:
+                        q.negate()  # keep the shortest path between keys
+                    previous["q:" + bone] = q.copy()
+                    pb.rotation_quaternion = q
+                    pb.keyframe_insert("rotation_quaternion", frame=at)
+                lift = float(frame.get("lift", 0.0)) * scale
+                self.obj.pose.bones["Hips"].location = rests["Hips"].inverted() @ Vector((0, 0, lift))
+                self.obj.pose.bones["Hips"].keyframe_insert("location", frame=at)
+        return clip or data.get("name", motion)
 
     # --- skeleton ---
     def bone(self, name, head, tail=None, parent=None):
@@ -220,6 +320,91 @@ class Rig:
             pb.keyframe_insert("scale", frame=frame)
 
 
+# ---------- recorded motions (MediaPipe Pose landmarks) ----------
+LM = dict(nose=0, ear_l=7, ear_r=8, sh_l=11, sh_r=12, el_l=13, el_r=14, wr_l=15, wr_r=16, idx_l=19, idx_r=20,
+          hip_l=23, hip_r=24, kn_l=25, kn_r=26, an_l=27, an_r=28, heel_l=29, heel_r=30, toe_l=31, toe_r=32)
+
+
+def motions_dir():
+    return os.environ.get("GAMESMITH_MOTIONS", "")
+
+
+def load_motion(name):
+    base = motions_dir()
+    if not base or not os.path.isdir(base):
+        raise RuntimeError("No recorded motions yet. Record one in the Blender tab (Motions).")
+    wanted = str(name).strip().lower()
+    names = []
+    for entry in sorted(os.listdir(base)):
+        path = os.path.join(base, entry, "motion.json")
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        names.append(data.get("name", entry))
+        if wanted in (entry.lower(), str(data.get("name", "")).lower()):
+            return data
+    raise ValueError(f'No recorded motion named "{name}". Recorded motions: {", ".join(names) or "none"}')
+
+
+def _mp(p):
+    """MediaPipe world landmark (x right, y down, z away from camera) -> Blender (X left of a -Y-facing person, Z up)."""
+    return Vector((p[0], p[2], -p[1]))
+
+
+def _basis(x_hint, up):
+    z = up.normalized()
+    x = x_hint - z * x_hint.dot(z)
+    if x.length < 1e-6:
+        x = Vector((1, 0, 0))
+    x.normalize()
+    y = z.cross(x)
+    return Matrix((x, y, z)).transposed().to_quaternion()
+
+
+def _humanoid_world_rotations(landmarks, rest_dirs, previous, index=0):
+    """World-space rotation (from rest) of every humanoid bone for one frame of landmarks."""
+    P = {k: _mp(landmarks[i]) for k, i in LM.items()}
+    vis = {k: (landmarks[i][3] if len(landmarks[i]) > 3 else 1.0) for k, i in LM.items()}
+    mid = lambda a, b: (P[a] + P[b]) / 2
+    hip_mid, sh_mid, ear_mid = mid("hip_l", "hip_r"), mid("sh_l", "sh_r"), mid("ear_l", "ear_r")
+    W = {}
+    if min(vis["hip_l"], vis["hip_r"]) >= 0.5:
+        W["Hips"] = _basis(P["hip_l"] - P["hip_r"], sh_mid - hip_mid)
+    else:
+        # Hips out of view (a waist-up video): stand upright, facing where the shoulders face.
+        W["Hips"] = _basis(P["sh_l"] - P["sh_r"], Vector((0, 0, 1)))
+    W["Chest"] = _basis(P["sh_l"] - P["sh_r"], sh_mid - hip_mid)
+    W["Spine"] = W["Hips"].slerp(W["Chest"], 0.5)
+    W["Head"] = _basis(P["ear_l"] - P["ear_r"], ear_mid - sh_mid) if min(vis["ear_l"], vis["ear_r"]) > 0.2 else W["Chest"]
+    W["Neck"] = W["Chest"].slerp(W["Head"], 0.5)
+
+    def chain(bone, parent, a, b, rest_dir=None):
+        cur = W[parent] @ (rest_dir or rest_dirs[bone])
+        if min(vis[a], vis[b]) < 0.5:
+            # Can't see this part: hold its last good pose for a moment (a brief dropout),
+            # then let it go back to rest instead of freezing a stale guess.
+            recent = index - previous.get("seen:" + bone, -999) <= 12
+            rel = previous.get("rel:" + bone, Quaternion()) if recent else Quaternion()
+            W[bone] = W[parent] @ rel
+            return
+        target = (P[b] - P[a]).normalized()
+        W[bone] = cur.rotation_difference(target) @ W[parent]
+        previous["rel:" + bone] = W[parent].inverted() @ W[bone]
+        previous["seen:" + bone] = index
+
+    for s in ("l", "r"):
+        S = s.upper()
+        chain(f"UpperArm.{S}", "Chest", f"sh_{s}", f"el_{s}")
+        chain(f"LowerArm.{S}", f"UpperArm.{S}", f"el_{s}", f"wr_{s}")
+        chain(f"Hand.{S}", f"LowerArm.{S}", f"wr_{s}", f"idx_{s}")
+        chain(f"UpperLeg.{S}", "Hips", f"hip_{s}", f"kn_{s}")
+        chain(f"LowerLeg.{S}", f"UpperLeg.{S}", f"kn_{s}", f"an_{s}")
+        # heel -> toe is flat and forward when standing, whatever angle the foot bone itself has
+        chain(f"Foot.{S}", f"LowerLeg.{S}", f"heel_{s}", f"toe_{s}", rest_dir=Vector((0, -1, 0)))
+    return W
+
+
 def _fcurves(action, obj):
     """F-curves of an action (Blender 4.4+ keeps them in layers/strips/channelbags)."""
     if hasattr(action, "fcurves") and len(getattr(action, "fcurves", [])):
@@ -240,7 +425,7 @@ def clips_info():
     ]
 
 
-HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS}
+HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS, "Matrix": Matrix, "Quaternion": Quaternion, "Euler": Euler, "LM": LM, "motions_dir": motions_dir}
 
 
 # ---------- measuring ----------
@@ -359,6 +544,8 @@ def main():
         clips = clips_info()
         if clips:
             stats["clips"] = clips
+        if any(o.type == "ARMATURE" and all(b in o.data.bones for b in ("Hips", "UpperArm.L", "LowerLeg.R")) for o in bpy.context.scene.objects):
+            stats["humanoid"] = True
         if bpy.context.object and bpy.context.object.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.select_all(action="DESELECT")

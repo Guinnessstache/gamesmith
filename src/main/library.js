@@ -34,6 +34,9 @@ bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.5))
 assign(bpy.context.object, mat("Placeholder", (0.6, 0.6, 0.65)))
 `
 
+// Videos of you stay on this computer; only the tracked motion goes to GitHub.
+const GITIGNORE = '.gamesmith/\n*.tmp.glb\n*.tmp.png\nmotions/*/video.*\n'
+
 export async function ensure() {
   fs.mkdirSync(root, { recursive: true })
   if (!fs.existsSync(join(root, '.git'))) {
@@ -41,10 +44,14 @@ export async function ensure() {
       join(root, 'README.md'),
       '# Gamesmith asset library\n\nModels made with Gamesmith. Each folder has `model.py` (the Blender script that builds it), `model.glb` (the model games load) and `preview.png`.\n'
     )
-    fs.writeFileSync(join(root, '.gitignore'), '.gamesmith/\n*.tmp.glb\n*.tmp.png\n')
+    fs.writeFileSync(join(root, '.gitignore'), GITIGNORE)
     await localGit.init(root)
     await localGit.commitAll(root, 'Started the asset library')
   }
+  // Libraries made before motions existed: add the video rule.
+  const gi = join(root, '.gitignore')
+  const cur = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : ''
+  if (!cur.includes('motions/*/video.*')) fs.writeFileSync(gi, cur + (cur.endsWith('\n') || !cur ? '' : '\n') + 'motions/*/video.*\n')
 }
 
 function safe(id, file = '') {
@@ -76,7 +83,7 @@ export function list() {
   if (!root || !fs.existsSync(root)) return []
   return fs
     .readdirSync(root, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith('.') && fs.existsSync(join(root, d.name, 'asset.json')))
+    .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'motions' && fs.existsSync(join(root, d.name, 'asset.json')))
     .map((d) => {
       try {
         const m = readMeta(d.name)
@@ -123,7 +130,7 @@ export function files(id) {
 export async function build(id, { blenderPath, runner, signal, commitMessage } = {}) {
   const tmpGlb = safe(id, 'model.tmp.glb')
   const tmpPng = safe(id, 'preview.tmp.png')
-  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal })
+  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot() })
   if (!r.ok) {
     for (const f of [tmpGlb, tmpPng]) fs.rmSync(f, { force: true })
     return r
@@ -258,4 +265,73 @@ export async function sync(message = 'Saved asset library from Gamesmith') {
 export async function status() {
   const s = settings()
   return { dir: root, count: list().length, github: s.github || null, lastSync: s.lastSync || null, unpushed: s.github ? await github.unpushedCount(root) : null }
+}
+
+// ---------- recorded motions: motions/<id>/motion.json (+ the video, kept on this computer only) ----------
+export const motionsRoot = () => join(root, 'motions')
+const motionPath = (id, file = '') => {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error(`Bad motion id "${id}"`)
+  return join(motionsRoot(), id, file)
+}
+
+export function listMotions() {
+  if (!root || !fs.existsSync(motionsRoot())) return []
+  return fs
+    .readdirSync(motionsRoot(), { withFileTypes: true })
+    .filter((d) => d.isDirectory() && fs.existsSync(join(motionsRoot(), d.name, 'motion.json')))
+    .map((d) => {
+      try {
+        const m = JSON.parse(fs.readFileSync(join(motionsRoot(), d.name, 'motion.json'), 'utf8'))
+        const video = fs.readdirSync(join(motionsRoot(), d.name)).find((f) => f.startsWith('video.'))
+        return { id: d.name, name: m.name, fps: m.fps, frames: m.frames.length, seconds: +((m.frames.length - 1) / m.fps).toFixed(2), loop: !!m.loop, created: m.created, video: video || null }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.created).localeCompare(String(a.created)))
+}
+
+export function readMotion(id) {
+  return JSON.parse(fs.readFileSync(motionPath(id, 'motion.json'), 'utf8'))
+}
+
+export function motionVideo(id) {
+  const dir = motionPath(id)
+  const f = fs.readdirSync(dir).find((x) => x.startsWith('video.'))
+  return f ? { name: f, bytes: fs.readFileSync(join(dir, f)) } : null
+}
+
+/** Save a tracked motion. data: { name, fps, loop, legLength, frames: [{ w, i, lift } | null] }. */
+export async function saveMotion(data, video) {
+  await ensure()
+  const name = String(data.name || '').trim() || 'Motion'
+  if (listMotions().some((m) => m.name.toLowerCase() === name.toLowerCase())) throw new Error(`You already have a motion called "${name}". Pick another name.`)
+  const base = slugify(name)
+  let id = base
+  for (let i = 2; fs.existsSync(motionPath(id)); i++) id = `${base}-${i}`
+  fs.mkdirSync(motionPath(id), { recursive: true })
+  const round = (n) => Math.round(n * 10000) / 10000
+  const frames = data.frames.map((f) =>
+    f ? { w: f.w.map((p) => p.map(round)), i: f.i?.map((p) => p.map(round)), lift: round(f.lift || 0) } : null
+  )
+  fs.writeFileSync(
+    motionPath(id, 'motion.json'),
+    JSON.stringify({ name, fps: data.fps, loop: !!data.loop, legLength: round(data.legLength || 0.85), source: data.source || 'video', created: new Date().toISOString(), frames })
+  )
+  if (video?.bytes) fs.writeFileSync(motionPath(id, `video.${video.ext || 'webm'}`), Buffer.from(video.bytes))
+  await localGit.commitAll(root, `Recorded motion: ${name}`)
+  return listMotions().find((m) => m.id === id)
+}
+
+export async function renameMotion(id, name) {
+  const m = readMotion(id)
+  m.name = name
+  fs.writeFileSync(motionPath(id, 'motion.json'), JSON.stringify(m))
+  await localGit.commitAll(root, `Renamed motion ${id} to ${name}`)
+}
+
+export async function removeMotion(id) {
+  fs.rmSync(motionPath(id), { recursive: true, force: true })
+  await localGit.commitAll(root, `Removed motion ${id}`)
 }

@@ -118,6 +118,20 @@ contextBridge.exposeInMainWorld('gs', {
     status: () => call('model:status'),
     onEvent: (fn) => on('model:event', fn)
   },
+  mocap: {
+    status: () => call('mocap:status'),
+    downloadModel: () => call('mocap:downloadModel'),
+    onProgress: (fn) => on('mocap:progress', fn)
+  },
+  motions: {
+    list: () => call('motions:list'),
+    read: (id) => call('motions:read', id),
+    video: (id) => call('motions:video', id),
+    save: (data, video) => call('motions:save', data, video),
+    rename: (id, name) => call('motions:rename', id, name),
+    remove: (id) => call('motions:remove', id),
+    pickVideo: () => call('motions:pickVideo')
+  },
   openUrl: (url) => call('open:url', url),
   git: {
     log: () => call('git:log'),

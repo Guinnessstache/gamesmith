@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, safeStorage, net } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, safeStorage, net, protocol, session } from 'electron'
 import { join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { getSettings, setSettings, AI_PRESETS } from './settings.js'
@@ -16,8 +16,12 @@ import { GameServer } from './gameServer.js'
 import * as blender from './blender.js'
 import * as library from './library.js'
 import { runModelAgent } from './modelAgent.js'
+import * as mocap from './mocap.js'
 import isoGit from 'isomorphic-git'
 import nodeFs from 'node:fs'
+
+// gsassets:// serves the body-tracking engine and model to the UI (works the same in dev and installed builds).
+protocol.registerSchemesAsPrivileged([{ scheme: 'gsassets', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }])
 
 const resourcesDir = app.isPackaged ? join(process.resourcesPath, 'resources') : join(__dirname, '../../resources')
 
@@ -637,6 +641,48 @@ handle('model:run', async (id, userText) => {
 })
 const localCommit = (msg) => git.commitAll(library.dir(), msg)
 
+// ---------- motion capture ----------
+let modelDownload = null
+handle('mocap:status', () => ({ model: mocap.hasModel(app.getPath('userData')), modelMB: Math.round(mocap.POSE_MODEL.bytes / 1e6) }))
+handle('mocap:downloadModel', async () => {
+  if (modelDownload) return modelDownload
+  modelDownload = mocap
+    .ensureModel(app.getPath('userData'), { fetchImpl: net.fetch, onProgress: (p) => send('mocap:progress', p) })
+    .finally(() => (modelDownload = null))
+  return modelDownload
+})
+handle('motions:list', () => library.listMotions())
+handle('motions:read', (id) => library.readMotion(id))
+handle('motions:video', (id) => {
+  const v = library.motionVideo(id)
+  return v ? { name: v.name, bytes: new Uint8Array(v.bytes) } : null
+})
+handle('motions:save', async (data, video) => {
+  const m = await library.saveMotion(data, video)
+  send('library:changed', {})
+  return m
+})
+handle('motions:rename', async (id, name) => {
+  await library.renameMotion(id, name)
+  send('library:changed', {})
+})
+handle('motions:remove', async (id) => {
+  await library.removeMotion(id)
+  send('library:changed', {})
+})
+handle('motions:pickVideo', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Choose a video of the move',
+    properties: ['openFile'],
+    filters: [{ name: 'Video', extensions: ['mp4', 'webm', 'mov', 'm4v', 'mkv', 'ogv'] }]
+  })
+  if (r.canceled) return null
+  const p = r.filePaths[0]
+  const size = nodeFs.statSync(p).size
+  if (size > 300 * 1e6) throw new Error('That video is over 300 MB. Trim it to just the move (a few seconds) first.')
+  return { name: p.split(/[\\/]/).pop(), bytes: new Uint8Array(nodeFs.readFileSync(p)) }
+})
+
 handle('open:url', (url) => /^https:\/\//.test(url) && shell.openExternal(url))
 
 // ---------- app lifecycle ----------
@@ -652,6 +698,14 @@ app.whenReady().then(async () => {
   assets.polyPizza.configureKeyStore(stores.polypizza)
   deploy.configureRenderStore(stores.render)
   library.configure(getSettings().libraryDir)
+  protocol.handle('gsassets', mocap.makeHandler({ resourcesDir, userData: app.getPath('userData') }))
+  // The webcam is only for the app's own Motions screen, never for games in the preview.
+  const ownPage = (url) => /^(file:|http:\/\/localhost:)/.test(url || '')
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+    if (permission === 'media') return callback(ownPage(details.requestingUrl) && (details.mediaTypes || ['video']).every((t) => t === 'video'))
+    callback(false)
+  })
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin) => permission === 'media' && ownPage(origin))
   createWindow()
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow())
 })

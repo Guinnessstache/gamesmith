@@ -44,6 +44,15 @@ for (const f of [
   copy(join(three, 'examples', 'jsm', f), join(out, 'three', 'addons', f))
 }
 
+// Body tracking for motion capture (MediaPipe, Apache-2.0): only the SIMD build, which every
+// Electron/Chromium version Gamesmith runs on supports.
+try {
+  const mp = join(root, 'node_modules', '@mediapipe', 'tasks-vision')
+  for (const f of ['vision_wasm_internal.js', 'vision_wasm_internal.wasm']) copy(join(mp, 'wasm', f), join(out, 'mediapipe', f))
+} catch (e) {
+  console.warn('[vendor] MediaPipe not installed; motion capture will be unavailable:', e.message)
+}
+
 const versions = {
   phaser: version('phaser'),
   three: version('three')

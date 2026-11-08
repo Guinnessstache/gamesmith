@@ -152,6 +152,10 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
               <span>Request timeout: seconds with no reply</span>
               <input type="number" min="30" value={ai.requestTimeoutSec} onChange={(e) => update({ requestTimeoutSec: Number(e.target.value) })} />
             </label>
+            <label className="field">
+              <span>Longest reply (tokens, thinking included)</span>
+              <input type="number" min="2048" step="1024" value={ai.maxReplyTokens ?? 32768} onChange={(e) => update({ maxReplyTokens: Number(e.target.value) })} />
+            </label>
           </div>
           <label className="field">
             <span>API key (only if your server requires one)</span>

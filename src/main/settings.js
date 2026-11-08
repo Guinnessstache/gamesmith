@@ -23,7 +23,8 @@ const DEFAULTS = {
     temperature: 0.2,
     maxSteps: 30,
     autoFixRounds: 3,
-    requestTimeoutSec: 600
+    requestTimeoutSec: 600,
+    maxReplyTokens: 32768
   },
   projectsDir: '',
   externalProjects: [], // game folders opened from elsewhere on this computer

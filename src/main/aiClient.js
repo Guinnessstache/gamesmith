@@ -45,6 +45,8 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     model: ai.model,
     messages,
     temperature: ai.temperature ?? 0.2,
+    // a cap on one reply (thinking included), so a model that loops can't run forever
+    max_tokens: Number(ai.maxReplyTokens) || 32768,
     stream: true
   }
   if (tools?.length) {
@@ -72,13 +74,34 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
   }, Math.max(idleMs, 30 * 60 * 1000))
   arm()
   const combined = signal ? AbortSignal.any([signal, quiet.signal]) : quiet.signal
-  const received = { chars: 0 }
+  const received = { chars: 0, text: '' } // text: the last part of what it wrote, for error messages
+  const tail = () => {
+    const t = received.text.replace(/\s+/g, ' ').trim().slice(-300)
+    return t ? `\nIts last words were: "…${t}"` : ''
+  }
+  const rate = () => {
+    const secs = (Date.now() - started) / 1000
+    return secs > 1 ? `about ${Math.round(received.chars / 4 / secs)} tokens per second` : ''
+  }
+  let looping = ''
+  let streaming = false
   const timeoutError = () => {
     const secs = Math.round((Date.now() - started) / 1000)
-    if (timedOut === 'total') return new Error(`The model was still writing after ${Math.round(secs / 60)} minutes, so Gamesmith stopped it. It may be stuck repeating itself; try again or use a different model.`)
+    if (looping) {
+      return new Error(
+        `The model got stuck repeating itself, so Gamesmith stopped it after ${secs} s. It kept writing: "${looping}"\n` +
+          'Try again, or raise Temperature in Settings a little (0.6 suits most thinking models).'
+      )
+    }
+    if (timedOut === 'total') {
+      return new Error(
+        `The model was still writing after ${Math.round(secs / 60)} minutes (${received.chars.toLocaleString()} characters, ${rate()}), so Gamesmith stopped it.` +
+          tail()
+      )
+    }
     return new Error(
       received.chars
-        ? `The model stopped sending anything for ${idleMs / 1000} s (after ${secs} s and ${received.chars.toLocaleString()} characters). The model server may have stalled or run out of memory.`
+        ? `The model stopped sending anything for ${idleMs / 1000} s (after ${secs} s and ${received.chars.toLocaleString()} characters). The model server may have stalled or run out of memory.${tail()}`
         : `The model didn't start answering within ${idleMs / 1000} s. A big model can take that long to read a long request: raise "Request timeout" in Settings → Advanced, or check that the model server is still running.`
     )
   }
@@ -107,7 +130,20 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
 
   const applyChoice = (choice) => {
     const d = choice.delta || choice.message || {}
-    received.chars += (d.content?.length || 0) + ((d.reasoning_content || d.reasoning)?.length || 0)
+    const piece = (d.reasoning_content || d.reasoning || '') + (d.content || '')
+    if (piece) {
+      received.chars += piece.length
+      received.text = (received.text + piece).slice(-8000)
+      if (streaming && received.chars - (received.checkedAt || 0) > 500) {
+        received.checkedAt = received.chars
+        const rep = findLoop(received.text)
+        if (rep) {
+          looping = rep
+          quiet.abort()
+          throw Object.assign(new Error('loop'), { name: 'AbortError' })
+        }
+      }
+    }
     if (d.content) {
       out.content += d.content
       onDelta({ content: d.content })
@@ -147,6 +183,7 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     for (const c of json.choices || []) applyChoice(c)
     out.usage = json.usage || null
   } else {
+    streaming = true
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
@@ -184,11 +221,38 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     }
   }
 
+  if (out.finishReason === 'length' && !calls.size) {
+    throw new Error(
+      `The model wrote ${received.chars.toLocaleString()} characters (the ${body.max_tokens.toLocaleString()}-token limit for one reply) without finishing. ` +
+        `Thinking models sometimes go round in circles: try again, or raise "Longest reply" in Settings → Advanced.${tail()}`
+    )
+  }
+
   out.toolCalls = [...calls.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([, c], i) => ({ id: c.id || `call_${Date.now()}_${i}`, name: c.name, arguments: c.arguments }))
     .filter((c) => c.name)
   return out
+}
+
+/**
+ * A model stuck in a loop writes the same passage over and over. Returns the repeated text, or ''.
+ * Looks for the last 200 characters appearing 6+ times in the last 8,000 (normal code and prose
+ * almost never repeat a 200-character run exactly, even with similar lines).
+ */
+export function findLoop(text) {
+  if (text.length < 1500) return ''
+  const probe = text.slice(-200)
+  if (!probe.trim() || /^(.)\1*$/s.test(probe)) return /^(.)\1*$/s.test(probe) && probe.trim() ? probe.slice(0, 40) : ''
+  let count = 0
+  for (let i = text.indexOf(probe); i >= 0; i = text.indexOf(probe, i + 1)) if (++count >= 6) break
+  if (count < 6) return ''
+  // the shortest repeating unit, for the message
+  for (let n = 10; n <= 200; n++) {
+    const unit = text.slice(-n)
+    if (text.slice(-n * 3) === unit.repeat(3)) return unit.replace(/\s+/g, ' ').trim().slice(0, 200)
+  }
+  return probe.replace(/\s+/g, ' ').trim()
 }
 
 /**

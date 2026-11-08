@@ -1,6 +1,6 @@
 {
   "name": "gamesmith",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Build browser games by describing them, with a local AI, GitHub saving, one-click hosting and Blender-made 3D models.",
   "main": "out/main/index.js",
   "scripts": {
@@ -14,12 +14,13 @@
     "test:agent": "node scripts/test-agent.mjs",
     "test:github": "node scripts/test-github.mjs",
     "test:assets": "node scripts/test-assets.mjs",
-    "test": "node scripts/test-agent.mjs && node scripts/test-assets.mjs && node scripts/test-github.mjs && node scripts/test-secrets.mjs && node scripts/test-import.mjs && node scripts/test-mocap.mjs && node scripts/test-furnace.mjs",
+    "test": "node scripts/test-agent.mjs && node scripts/test-assets.mjs && node scripts/test-github.mjs && node scripts/test-secrets.mjs && node scripts/test-import.mjs && node scripts/test-mocap.mjs && node scripts/test-furnace.mjs && node scripts/test-blueprint.mjs",
     "test:secrets": "node scripts/test-secrets.mjs",
     "test:blender": "node scripts/test-blender.mjs",
     "test:import": "node scripts/test-import.mjs",
     "test:mocap": "node scripts/test-mocap.mjs",
     "test:furnace": "node scripts/test-furnace.mjs",
+    "test:blueprint": "node scripts/test-blueprint.mjs",
     "test:updater": "electron scripts/test-updater.cjs"
   },
   "author": "Jason Thistle",

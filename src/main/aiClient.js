@@ -39,7 +39,45 @@ export async function listModels(ai) {
  * Streamed chat completion. Calls onDelta({ content, reasoning }) as tokens
  * arrive and resolves to { content, reasoning, toolCalls, finishReason, usage }.
  */
-export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) {
+// How servers are asked to think less. Each server reads the fields it knows and (usually) ignores
+// the rest; one that rejects them gets the request again without them.
+const THINKING = {
+  auto: null,
+  short: { reasoning_effort: 'low', chat_template_kwargs: { reasoning_effort: 'low' } },
+  off: { reasoning_effort: 'low', think: false, chat_template_kwargs: { enable_thinking: false, thinking: false } }
+}
+const noExtras = new Set() // servers that rejected the extra fields
+
+const NUDGE =
+  "You have planned enough. Stop planning and act now: make the tool call (write the script, or make the change) with a simple version that works. You can improve it after it's built."
+
+/**
+ * Chat with a thinking budget. Thinking models can plan for a very long time before answering
+ * (tens of thousands of tokens, which is half an hour on a slow computer). When the planning
+ * passes the budget, the request is stopped and sent again with thinking turned down and a nudge
+ * to act now.
+ */
+export async function chat(ai, opts) {
+  const mode = THINKING[ai.thinking] !== undefined ? ai.thinking : 'auto'
+  try {
+    return await chatOnce(ai, { ...opts, thinking: mode })
+  } catch (e) {
+    if (e.code !== 'THINKING_BUDGET') throw e
+    opts.onDelta?.({ reasoning: `\n\n[Gamesmith: that's ${e.tokens.toLocaleString()} tokens of planning. Asking the model to stop planning and write it now.]\n\n` })
+    const messages = [...opts.messages, { role: 'user', content: NUDGE }]
+    try {
+      return await chatOnce(ai, { ...opts, messages, thinking: 'off', budgetTokens: Math.max(2000, Math.round(e.budget / 2)) })
+    } catch (e2) {
+      if (e2.code !== 'THINKING_BUDGET') throw e2
+      throw new Error(
+        `The model planned for ${e.tokens.toLocaleString()} tokens, was asked to stop, and planned for another ${e2.tokens.toLocaleString()} without writing anything. ` +
+          'Set "Model thinking" to Off in Settings → Advanced, or use a model without thinking for Blender models.'
+      )
+    }
+  }
+}
+
+async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, thinking = 'auto', budgetTokens }) {
   const url = joinUrl(ai.baseUrl, '/chat/completions')
   const body = {
     model: ai.model,
@@ -53,6 +91,10 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     body.tools = tools
     body.tool_choice = 'auto'
   }
+  const extras = THINKING[thinking]
+  if (extras && !noExtras.has(ai.baseUrl)) Object.assign(body, extras)
+  // planning allowed before the model must start answering (0 = no limit)
+  const budget = budgetTokens ?? (Number.isFinite(Number(ai.maxThinkingTokens)) ? Number(ai.maxThinkingTokens) : 6000)
 
   // The timeout is for silence, not total time: a slow local model that keeps writing is fine,
   // however long the answer. It fails only when nothing arrives for that long (or after 30 minutes).
@@ -84,9 +126,11 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     return secs > 1 ? `about ${Math.round(received.chars / 4 / secs)} tokens per second` : ''
   }
   let looping = ''
+  let overBudget = 0
   let streaming = false
   const timeoutError = () => {
     const secs = Math.round((Date.now() - started) / 1000)
+    if (overBudget) return Object.assign(new Error(`Planned for ${overBudget} tokens without answering.`), { code: 'THINKING_BUDGET', tokens: overBudget, budget })
     if (looping) {
       return new Error(
         `The model got stuck repeating itself, so Gamesmith stopped it after ${secs} s. It kept writing: "${looping}"\n` +
@@ -97,6 +141,12 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
       return new Error(
         `The model was still writing after ${Math.round(secs / 60)} minutes (${received.chars.toLocaleString()} characters, ${rate()}), so Gamesmith stopped it.` +
           tail()
+      )
+    }
+    if (!received.chars && received.pings) {
+      return new Error(
+        `The model server kept the connection open for ${secs} s but sent no text at all, so the model may not be running. ` +
+          'Check the model server on the Mac: the model may still be loading, the request may be queued behind another one, or the server may be stuck (restarting it usually helps).'
       )
     }
     return new Error(
@@ -121,6 +171,10 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
   arm()
   if (!res.ok) {
     done()
+    if (extras && !noExtras.has(ai.baseUrl) && (res.status === 400 || res.status === 422)) {
+      noExtras.add(ai.baseUrl) // this server doesn't take the thinking settings: ask again without them
+      return chatOnce(ai, { messages, tools, signal, onDelta, thinking: 'auto', budgetTokens })
+    }
     const text = await res.text().catch(() => '')
     throw new Error(`Model server error ${res.status}: ${text.slice(0, 600)}`)
   }
@@ -131,6 +185,21 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
   const applyChoice = (choice) => {
     const d = choice.delta || choice.message || {}
     const piece = (d.reasoning_content || d.reasoning || '') + (d.content || '')
+    if (piece || d.tool_calls?.length) arm()
+    if (d.tool_calls?.length) received.acting = true
+    if (budget > 0 && streaming && !received.acting) {
+      // planning so far: the reasoning, plus any <think> section the server leaves in the text
+      const visible = out.content + (d.content || '')
+      const open = visible.trimStart().startsWith('<think>') && !visible.includes('</think>')
+      const planned = out.reasoning.length + (d.reasoning_content || d.reasoning || '').length + (open ? visible.length : 0)
+      const answering = !open && visible.replace(/<think>[\s\S]*?<\/think>/g, '').trim().length > 0
+      if (answering) received.acting = true
+      else if (planned / 4 > budget) {
+        overBudget = Math.round(planned / 4)
+        quiet.abort()
+        throw Object.assign(new Error('budget'), { name: 'AbortError' })
+      }
+    }
     if (piece) {
       received.chars += piece.length
       received.text = (received.text + piece).slice(-8000)
@@ -191,12 +260,14 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
       for (;;) {
         const { value, done: ended } = await reader.read()
         if (ended) break
-        arm() // anything arriving (tokens, keep-alive comments) counts as the model still working
+        // Only real output counts as progress. Keep-alive pings don't: a server can send those while the
+        // request sits in a queue or the model never starts, and then the computer isn't working on it at all.
         buf += decoder.decode(value, { stream: true })
         let nl
         while ((nl = buf.indexOf('\n')) >= 0) {
           const line = buf.slice(0, nl).trim()
           buf = buf.slice(nl + 1)
+          if (line.startsWith(':')) received.pings = (received.pings || 0) + 1
           if (!line.startsWith('data:')) continue
           const data = line.slice(5).trim()
           if (data === '[DONE]') continue

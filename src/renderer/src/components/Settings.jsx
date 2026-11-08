@@ -153,6 +153,18 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
               <input type="number" min="30" value={ai.requestTimeoutSec} onChange={(e) => update({ requestTimeoutSec: Number(e.target.value) })} />
             </label>
             <label className="field">
+              <span>Model thinking</span>
+              <select value={ai.thinking || 'auto'} onChange={(e) => update({ thinking: e.target.value })}>
+                <option value="auto">Let the model decide</option>
+                <option value="short">Keep it short</option>
+                <option value="off">Off (fastest)</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Planning limit (tokens before it must answer, 0 = none)</span>
+              <input type="number" min="0" step="1000" value={ai.maxThinkingTokens ?? 6000} onChange={(e) => update({ maxThinkingTokens: Number(e.target.value) })} />
+            </label>
+            <label className="field">
               <span>Longest reply (tokens, thinking included)</span>
               <input type="number" min="2048" step="1024" value={ai.maxReplyTokens ?? 32768} onChange={(e) => update({ maxReplyTokens: Number(e.target.value) })} />
             </label>

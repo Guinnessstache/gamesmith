@@ -149,7 +149,7 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
               <input type="number" min="0" max="10" value={ai.autoFixRounds} onChange={(e) => update({ autoFixRounds: Number(e.target.value) })} />
             </label>
             <label className="field">
-              <span>Request timeout (seconds)</span>
+              <span>Request timeout: seconds with no reply</span>
               <input type="number" min="30" value={ai.requestTimeoutSec} onChange={(e) => update({ requestTimeoutSec: Number(e.target.value) })} />
             </label>
           </div>

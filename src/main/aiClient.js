@@ -52,16 +52,52 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     body.tool_choice = 'auto'
   }
 
-  const timeout = AbortSignal.timeout((ai.requestTimeoutSec || 600) * 1000)
-  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+  // The timeout is for silence, not total time: a slow local model that keeps writing is fine,
+  // however long the answer. It fails only when nothing arrives for that long (or after 30 minutes).
+  const idleMs = Math.max(1, Number(ai.requestTimeoutSec) || 600) * 1000
+  const started = Date.now()
+  const quiet = new AbortController()
+  let timedOut = ''
+  let timer
+  const arm = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      timedOut = 'idle'
+      quiet.abort()
+    }, idleMs)
+  }
+  const ceiling = setTimeout(() => {
+    timedOut = 'total'
+    quiet.abort()
+  }, Math.max(idleMs, 30 * 60 * 1000))
+  arm()
+  const combined = signal ? AbortSignal.any([signal, quiet.signal]) : quiet.signal
+  const received = { chars: 0 }
+  const timeoutError = () => {
+    const secs = Math.round((Date.now() - started) / 1000)
+    if (timedOut === 'total') return new Error(`The model was still writing after ${Math.round(secs / 60)} minutes, so Gamesmith stopped it. It may be stuck repeating itself; try again or use a different model.`)
+    return new Error(
+      received.chars
+        ? `The model stopped sending anything for ${idleMs / 1000} s (after ${secs} s and ${received.chars.toLocaleString()} characters). The model server may have stalled or run out of memory.`
+        : `The model didn't start answering within ${idleMs / 1000} s. A big model can take that long to read a long request: raise "Request timeout" in Settings → Advanced, or check that the model server is still running.`
+    )
+  }
+  const done = () => {
+    clearTimeout(timer)
+    clearTimeout(ceiling)
+  }
 
   let res
   try {
     res = await fetch(url, { method: 'POST', headers: headers(ai), body: JSON.stringify(body), signal: combined })
   } catch (e) {
+    done()
+    if (timedOut && !signal?.aborted) throw timeoutError()
     throw new Error(friendlyNetworkError(e, url))
   }
+  arm()
   if (!res.ok) {
+    done()
     const text = await res.text().catch(() => '')
     throw new Error(`Model server error ${res.status}: ${text.slice(0, 600)}`)
   }
@@ -71,6 +107,7 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
 
   const applyChoice = (choice) => {
     const d = choice.delta || choice.message || {}
+    received.chars += (d.content?.length || 0) + ((d.reasoning_content || d.reasoning)?.length || 0)
     if (d.content) {
       out.content += d.content
       onDelta({ content: d.content })
@@ -97,8 +134,16 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
 
   const ctype = res.headers.get('content-type') || ''
   if (!ctype.includes('text/event-stream')) {
-    // Server ignored stream:true and returned a single JSON body.
-    const json = await res.json()
+    // Server ignored stream:true and returned a single JSON body (nothing arrives until it's finished).
+    let json
+    try {
+      json = await res.json()
+    } catch (e) {
+      if (combined.aborted) throw signal?.aborted ? new Error('Stopped.') : timeoutError()
+      throw e
+    } finally {
+      done()
+    }
     for (const c of json.choices || []) applyChoice(c)
     out.usage = json.usage || null
   } else {
@@ -107,8 +152,9 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
     let buf = ''
     try {
       for (;;) {
-        const { value, done } = await reader.read()
-        if (done) break
+        const { value, done: ended } = await reader.read()
+        if (ended) break
+        arm() // anything arriving (tokens, keep-alive comments) counts as the model still working
         buf += decoder.decode(value, { stream: true })
         let nl
         while ((nl = buf.indexOf('\n')) >= 0) {
@@ -130,9 +176,11 @@ export async function chat(ai, { messages, tools, signal, onDelta = () => {} }) 
       }
     } catch (e) {
       if (e.name === 'AbortError' || combined.aborted) {
-        throw new Error(signal?.aborted ? 'Stopped.' : 'The model took too long to respond (request timeout).')
+        throw signal?.aborted ? new Error('Stopped.') : timeoutError()
       }
       throw e
+    } finally {
+      done()
     }
   }
 

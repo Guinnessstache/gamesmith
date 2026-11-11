@@ -1,6 +1,6 @@
 {
   "name": "gamesmith",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "description": "Build browser games by describing them, with a local AI, GitHub saving, one-click hosting and Blender-made 3D models.",
   "main": "out/main/index.js",
   "scripts": {

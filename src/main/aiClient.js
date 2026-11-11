@@ -63,17 +63,50 @@ export async function chat(ai, opts) {
     return await chatOnce(ai, { ...opts, thinking: mode })
   } catch (e) {
     if (e.code !== 'THINKING_BUDGET') throw e
+    const used = useDraft(e, opts)
+    if (used) return used
     opts.onDelta?.({ reasoning: `\n\n[Gamesmith: that's ${e.tokens.toLocaleString()} tokens of planning. Asking the model to stop planning and write it now.]\n\n` })
     const messages = [...opts.messages, { role: 'user', content: NUDGE }]
     try {
       return await chatOnce(ai, { ...opts, messages, thinking: 'off', budgetTokens: Math.max(2000, Math.round(e.budget / 2)) })
     } catch (e2) {
       if (e2.code !== 'THINKING_BUDGET') throw e2
+      const used2 = useDraft(e2, opts)
+      if (used2) return used2
       throw new Error(
         `The model planned for ${e.tokens.toLocaleString()} tokens, was asked to stop, and planned for another ${e2.tokens.toLocaleString()} without writing anything. ` +
           'Set "Model thinking" to Off in Settings → Advanced, or use a model without thinking for Blender models.'
       )
     }
+  }
+}
+
+/** The last finished code block in the model's thinking that looks like the answer (or ''). */
+export function draftFrom(thoughts, looksRight = (code) => code.split('\n').length >= 4) {
+  const blocks = [...String(thoughts).matchAll(/```[\w-]*[ \t]*\n([\s\S]*?)```/g)].map((m) => m[1].trim())
+  for (let k = blocks.length - 1; k >= 0; k--) if (looksRight(blocks[k])) return blocks[k]
+  return ''
+}
+
+// opts.draftTool: { name, argument, check(code) } — a tool that can take a draft written in the thinking
+// The Blender modeling agent's write_script tool takes a script drafted while planning.
+const BLENDER_DRAFT = {
+  name: 'write_script',
+  argument: 'content',
+  label: 'script',
+  check: (code) => /\b(bpy\.|mat\(|assign\(|texture\(|terrain\(|Rig\.|smooth\()/.test(code) && code.split('\n').length >= 4
+}
+
+function useDraft(e, opts) {
+  const tool = opts.draftTool ?? (opts.tools?.some((t) => t.function?.name === 'write_script') ? BLENDER_DRAFT : null)
+  if (!tool || !e.draft || (tool.check && !tool.check(e.draft))) return null
+  opts.onDelta?.({ reasoning: `\n\n[Gamesmith: the model wrote its ${tool.label || 'answer'} while planning, so Gamesmith is using that.]\n\n` })
+  return {
+    content: '',
+    reasoning: '',
+    finishReason: 'tool_calls',
+    usage: null,
+    toolCalls: [{ id: `draft_${Date.now()}`, name: tool.name, arguments: JSON.stringify({ [tool.argument]: e.draft }) }]
   }
 }
 
@@ -127,10 +160,11 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
   }
   let looping = ''
   let overBudget = 0
+  let draft = ''
   let streaming = false
   const timeoutError = () => {
     const secs = Math.round((Date.now() - started) / 1000)
-    if (overBudget) return Object.assign(new Error(`Planned for ${overBudget} tokens without answering.`), { code: 'THINKING_BUDGET', tokens: overBudget, budget })
+    if (overBudget) return Object.assign(new Error(`Planned for ${overBudget} tokens without answering.`), { code: 'THINKING_BUDGET', tokens: overBudget, budget, draft })
     if (looping) {
       return new Error(
         `The model got stuck repeating itself, so Gamesmith stopped it after ${secs} s. It kept writing: "${looping}"\n` +
@@ -195,9 +229,17 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
       const answering = !open && visible.replace(/<think>[\s\S]*?<\/think>/g, '').trim().length > 0
       if (answering) received.acting = true
       else if (planned / 4 > budget) {
-        overBudget = Math.round(planned / 4)
-        quiet.abort()
-        throw Object.assign(new Error('budget'), { name: 'AbortError' })
+        // Many thinking models draft the answer inside their thinking ("Final script: ```python ...").
+        // Let a draft that's being written finish, then stop and hand it over.
+        const thoughts = out.reasoning + (d.reasoning_content || d.reasoning || '') + (open ? visible : '')
+        const fences = (thoughts.match(/```/g) || []).length
+        const drafting = fences % 2 === 1 && planned / 4 < budget * 3
+        if (!drafting) {
+          overBudget = Math.round(planned / 4)
+          draft = draftFrom(thoughts)
+          quiet.abort()
+          throw Object.assign(new Error('budget'), { name: 'AbortError' })
+        }
       }
     }
     if (piece) {

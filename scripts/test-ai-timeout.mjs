@@ -1,6 +1,6 @@
 // The AI timeout counts silence, not total time: a slow model that keeps writing is fine.
 import http from 'node:http'
-import { chat, findLoop } from '../src/main/aiClient.js'
+import { chat, findLoop, draftFrom } from '../src/main/aiClient.js'
 
 let failed = 0
 const seen = []
@@ -29,6 +29,20 @@ const server = http.createServer(async (req, res) => {
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: `Consideration ${k}: maybe the lid should be ${k % 7} cm thicker, or the hinges at ${k * 3} mm. ` } }] })}\n\n`)
       if (k % 20 === 0) await sleep(1)
     }
+    return res.end('data: [DONE]\n\n')
+  }
+  if (mode === 'drafter') {
+    // plans for a long time, then writes the whole script inside its thinking (and would keep going)
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+    const say = (t) => res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: t } }] })}\n\n`)
+    for (let k = 0; k < 150; k++) say(`Idea ${k}: the chest lid could be ${k} mm. `)
+    say('Final script:\n```python\n')
+    for (let k = 0; k < 120; k++) {
+      say(`bpy.ops.mesh.primitive_cube_add(size=0.${(k % 9) + 1}, location=(${k}, 0, 0))\nassign(bpy.context.object, mat("Wood${k}", (0.5, 0.3, 0.1)))\n`)
+      if (k % 10 === 0) await sleep(1)
+    }
+    say('```\nHmm, wait, let me reconsider the hinges again. ')
+    for (let k = 0; k < 2000 && !res.destroyed; k++) say(`Hinge thought ${k}. `)
     return res.end('data: [DONE]\n\n')
   }
   if (mode === 'planner' || mode === 'strict') {
@@ -111,6 +125,15 @@ const plan = await chat({ ...base('planner'), requestTimeoutSec: 60, maxThinking
 const retry = seen.filter((r) => r.mode === 'planner').at(-1)?.body
 ok(!(plan instanceof Error) && plan.toolCalls[0]?.name === 'write_script' && notes.length === 1, `too much planning: stopped, then asked again and it acts (${plan.message || plan.toolCalls?.[0]?.name})`)
 ok(retry?.chat_template_kwargs?.enable_thinking === false && /planned enough/.test(retry.messages.at(-1).content), 'the second try turns thinking off and tells it to act now')
+const scriptTool = { name: 'write_script', argument: 'content', label: 'script', check: (c) => /bpy\./.test(c) }
+const drafted = await chat({ ...base('drafter'), requestTimeoutSec: 60, maxThinkingTokens: 2000 }, { messages, draftTool: scriptTool }).catch((e) => e)
+const draftArgs = drafted.toolCalls ? JSON.parse(drafted.toolCalls[0].arguments) : {}
+ok(drafted.toolCalls?.[0]?.name === 'write_script' && draftArgs.content.split('\n').length === 240 && seen.filter((r) => r.mode === 'drafter').length === 1,
+  `a script written inside the thinking is used as soon as it's finished (${draftArgs.content?.split("\n").length} lines, one request${drafted.message ? ": " + drafted.message : ""})`)
+const viaTools = await chat({ ...base('drafter'), requestTimeoutSec: 60, maxThinkingTokens: 2000 }, { messages, tools: [{ type: 'function', function: { name: 'write_script', parameters: {} } }] }).catch((e) => e)
+ok(viaTools.toolCalls?.[0]?.name === 'write_script', 'the Blender agent (it has a write_script tool) gets this automatically')
+ok(draftFrom('plan ```python\na\nb\nc\nd\n``` more ```\nunfinished') === 'a\nb\nc\nd' && draftFrom('no code here') === '', 'only finished code blocks count as a draft')
+
 const stubborn = await chat({ ...base('stubborn'), requestTimeoutSec: 60, maxThinkingTokens: 2000 }, { messages }).catch((e) => e)
 ok(stubborn instanceof Error && /Model thinking/.test(stubborn.message), `a model that keeps planning anyway gets clear advice: "${stubborn.message?.slice(0, 110)}…"`)
 const strict = await chat({ ...base('strict'), thinking: 'off' }, { messages }).catch((e) => e)

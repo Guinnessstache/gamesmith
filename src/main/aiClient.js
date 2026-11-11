@@ -44,7 +44,9 @@ export async function listModels(ai) {
 const THINKING = {
   auto: null,
   short: { reasoning_effort: 'low', chat_template_kwargs: { reasoning_effort: 'low' } },
-  off: { reasoning_effort: 'low', think: false, chat_template_kwargs: { enable_thinking: false, thinking: false } }
+  // Only the chat-template switch: adding reasoning_effort or think alongside it can cancel it out
+  // (seen with DeepSeek behind an OpenAI-compatible Mac server: thinking came back at full length).
+  off: { chat_template_kwargs: { enable_thinking: false, thinking: false } }
 }
 const noExtras = new Set() // servers that rejected the extra fields
 

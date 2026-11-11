@@ -124,7 +124,8 @@ const notes = []
 const plan = await chat({ ...base('planner'), requestTimeoutSec: 60, maxThinkingTokens: 2000 }, { messages, onDelta: (d) => d.reasoning && /Gamesmith:/.test(d.reasoning) && notes.push(d.reasoning) }).catch((e) => e)
 const retry = seen.filter((r) => r.mode === 'planner').at(-1)?.body
 ok(!(plan instanceof Error) && plan.toolCalls[0]?.name === 'write_script' && notes.length === 1, `too much planning: stopped, then asked again and it acts (${plan.message || plan.toolCalls?.[0]?.name})`)
-ok(retry?.chat_template_kwargs?.enable_thinking === false && /planned enough/.test(retry.messages.at(-1).content), 'the second try turns thinking off and tells it to act now')
+ok(retry?.chat_template_kwargs?.enable_thinking === false && retry.reasoning_effort === undefined && retry.think === undefined && /planned enough/.test(retry.messages.at(-1).content),
+  'the second try turns thinking off (only enable_thinking: other fields can cancel it) and tells it to act now')
 const scriptTool = { name: 'write_script', argument: 'content', label: 'script', check: (c) => /bpy\./.test(c) }
 const drafted = await chat({ ...base('drafter'), requestTimeoutSec: 60, maxThinkingTokens: 2000 }, { messages, draftTool: scriptTool }).catch((e) => e)
 const draftArgs = drafted.toolCalls ? JSON.parse(drafted.toolCalls[0].arguments) : {}

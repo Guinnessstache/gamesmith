@@ -224,6 +224,34 @@ ok(/GLTFLoader/.test(assets.usageHint(rec, 'three-3d')) && /0\.82/.test(assets.u
   ok(library.listMotions().length === 0, 'motion removed')
 }
 
+// ---- stylized characters: character() ----
+{
+  const code = `rig = character(build="hero", hair="short", beard="stubble", shirt=(0.88, 0.84, 0.74), vest=(0.45, 0.3, 0.18),
+                pants=(0.28, 0.38, 0.6), boots=True, shoes=(0.4, 0.24, 0.12), belt=(0.3, 0.18, 0.1), hat="cowboy", name="Cowboy")
+assert rig.is_humanoid and set(rig.parts) >= {"body", "head", "eyes", "hair", "beard", "hat", "buckle"}
+body = rig.parts["body"]
+assert body.modifiers[0].type == "ARMATURE" and len(body.vertex_groups) >= 15, "the body bends with the skeleton"
+assert {p.material_index for p in body.data.polygons} == set(range(len(body.data.materials))), "every clothing color is used"
+with rig.clip("Wave", seconds=1.0):
+    rig.pose("UpperArm.R", at=0.0, rotate=(0, 0, 0))
+    rig.pose("UpperArm.R", at=0.5, rotate=(0, -150, 0))
+    rig.pose("UpperArm.R", at=1.0, rotate=(0, 0, 0))
+kid = character(build="kid", height=1.3, body="female", hair="ponytail", sleeves="short", legs="shorts", hat="cap", name="Kid")
+kid.obj.location.x = 1.2
+`
+  const ch = await library.create('Cowboy', '')
+  library.writeScript(ch.id, code)
+  const cb = await library.build(ch.id, { blenderPath: exe, runner, commitMessage: false })
+  ok(cb.ok, `stylized characters build${cb.ok ? '' : ': ' + cb.error + ' ' + (cb.where || '')}`)
+  ok(cb.ok && cb.stats.humanoid && cb.stats.min_z > -0.01 && cb.stats.size_m.height > 1.75 && cb.stats.size_m.height < 2.0, `standing on the ground, about 1.8 m plus the hat (${cb.stats?.size_m?.height} m)`)
+  ok(cb.ok && cb.stats.triangles > 15000 && cb.stats.triangles < 70000, `smooth but game-sized (${cb.stats?.triangles} triangles for two characters)`)
+  ok(cb.ok && ['Cowboy Shirt', 'Cowboy Vest', 'Cowboy Boots', 'Cowboy Hat', 'Kid Shirt'].every((m) => cb.stats.materials.includes(m)), 'each character gets its own clothing colors')
+  const glb = library.files(ch.id)['model.glb']
+  const gj = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'))
+  ok(gj.skins?.length >= 2 && gj.skins[0].joints.length === 17 && gj.meshes.some((m) => m.primitives.some((p) => p.attributes.JOINTS_0 && p.attributes.WEIGHTS_0)), 'the .glb carries the skeleton and skin weights')
+  ok(cb.ok && cb.stats.clips?.some((c) => c.name === 'Wave'), 'clips play on it')
+}
+
 // ---- detailed models: smooth(), Poly Haven textures, terrain() ----
 {
   const { createRequire } = await import('node:module')

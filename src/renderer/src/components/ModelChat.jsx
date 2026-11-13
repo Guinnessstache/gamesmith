@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 const STARTERS = [
   'A wooden treasure chest with gold trim',
   'Snowy mountains around a lake, 100 m across',
-  'A mossy boulder with real rock textures',
+  'A cowboy character with a hat, vest and boots',
   'A medieval wooden door with iron hinges',
   'A blocky knight with idle, walk and attack animations'
 ]

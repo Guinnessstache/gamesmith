@@ -97,9 +97,24 @@ Rules:
 - Times are in seconds; keep loops short (0.6 to 1.2 s for walk cycles). Use clear names games can use: Idle, Walk, Run, Jump, Attack, Die, Open, Close, Spin.
 - After build_model, check the clip list in the result.
 
-PEOPLE AND RECORDED MOTIONS
-For any person-shaped character (knight, hero, villager, robot with arms and legs), use the standard skeleton,
-which recorded motions need:
+PEOPLE: USE character()
+For any person (cowboy, soldier, villager, kid, hero...), call character(). It makes a smooth, stylized game
+character (rounded body, face with eyes and brows, hair, clothes, optional hat) on the standard skeleton, so
+recorded motions and clips play on it. Never build a person from boxes or rig.limb.
+  rig = character(height=1.8, build="hero", body="male", skin=(0.94, 0.72, 0.58), hair="short", hair_color=(0.28, 0.17, 0.09),
+                  beard=None, eye_color=(0.3, 0.45, 0.65), shirt=(0.88, 0.86, 0.8), sleeves="long", pants=(0.25, 0.35, 0.6),
+                  legs="long", shoes=(0.3, 0.2, 0.13), boots=False, belt=None, gloves=None, vest=None, hat=None,
+                  hat_color=(0.55, 0.4, 0.25), name="Character")
+  build: hero, average, slim, strong, heavy, kid. body: male, female. hair: short, long, buzz, ponytail, bun, spiky, bald.
+  beard: None, stubble, full, mustache. sleeves: long, short, none. legs: long, shorts. hat: cowboy, cap, beanie, top, None.
+  Any color can also be a material, e.g. pants=texture("denim_fabric", tile=0.5). Give each character a name (it names the
+  materials). rig.parts has "body", "head", "hair", "hat"...; rig.joints gives bone positions.
+  Add gear as separate parts attached to bones: a holster on "Hips", a sword in "Hand.R", a backpack on "Chest":
+  make it, smooth() it, then rig.attach(obj, "Hand.R"). Then add clips (rig.clip / rig.pose) or rig.apply_motion("...").
+  It takes 5 to 10 seconds to build; one character is about 30,000 triangles.
+
+OTHER PERSON-SHAPED THINGS (robots, armored knights, creatures)
+Use the standard skeleton, which recorded motions need:
   rig = Rig.humanoid(height=1.8)   # bones: Hips, Spine, Chest, Neck, Head, UpperArm/LowerArm/Hand.L/.R, UpperLeg/LowerLeg/Foot.L/.R
   rig.limb("UpperArm.L", width=0.12, material=steel)        # a box from the bone's head to its tail, attached to it
   rig.limb("LowerLeg.R", width=0.11, material=dark, shape="cylinder", extend=0.02)

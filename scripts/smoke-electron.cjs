@@ -520,6 +520,19 @@ mock.listen(0, '127.0.0.1', async () => {
     const viewerError = await js(`document.querySelector('.asset-stage')?.innerText || ''`)
     check(!/couldn't|error|failed/i.test(viewerError), 'textured terrain opens in the 3D view')
     await shot('26c-terrain')
+
+    // A stylized character, shown and animated in the 3D view
+    const heroId = await js(`window.gs.library.create('Cowboy', '')`)
+    const heroCode = 'rig = character(build="hero", vest=(0.45, 0.3, 0.18), boots=True, belt=(0.3, 0.18, 0.1), hat="cowboy", beard="stubble", name="Cowboy")\nwith rig.clip("Wave", seconds=1.0):\n    rig.pose("UpperArm.R", at=0.0, rotate=(0, 0, 0))\n    rig.pose("UpperArm.R", at=0.5, rotate=(0, -150, 0))\n    rig.pose("UpperArm.R", at=1.0, rotate=(0, 0, 0))\n'
+    await js(`window.gs.library.saveScript(${JSON.stringify(heroId)}, ${JSON.stringify(heroCode)})`)
+    const hb = await js(`window.gs.library.build(${JSON.stringify(heroId)})`)
+    check(hb.ok && hb.stats.humanoid, `stylized character builds (${hb.error || hb.stats.triangles + ' triangles'})`)
+    for (let i = 0; i < 20 && !(await js(`!![...document.querySelectorAll('.lib-item')].find(b => b.textContent.includes('Cowboy'))`)); i++) await sleep(500)
+    await js(`[...document.querySelectorAll('.lib-item')].find(b => b.textContent.includes('Cowboy'))?.click()`)
+    await sleep(1500)
+    check(await js(`[...document.querySelectorAll('.clip-bar .clip')].some(c => c.textContent.includes('Wave'))`), 'its animation is listed in the 3D view')
+    await sleep(2500)
+    await shot('26d-character')
     await js(`document.querySelector('.game-tab').click()`)
     const gameChatVisible = await js(`!document.querySelector('.chat-slot').hidden`)
     check(gameChatVisible, 'game chat comes back on the Game tab')

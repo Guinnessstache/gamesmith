@@ -722,6 +722,14 @@ HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": ma
            "smooth": smooth, "texture": texture, "terrain": terrain, "ground": ground, "box_uv": box_uv}
 
 
+# Stylized characters live in character.py (next to this file).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import character as _character  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+_character.R = SimpleNamespace(mat=mat, assign=assign, Rig=Rig, box_uv=box_uv)
+HELPERS["character"] = _character.character
+
 # ---------- measuring ----------
 def mesh_objects():
     return [o for o in bpy.context.scene.objects if o.type == "MESH"]

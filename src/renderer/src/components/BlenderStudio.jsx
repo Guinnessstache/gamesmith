@@ -4,6 +4,7 @@ import CodeEditor from './CodeEditor.jsx'
 import { BuildBadge } from './ModelChat.jsx'
 import { timeAgo } from './ui.jsx'
 import { useMotions, MotionList, MotionMain } from './Motions.jsx'
+import { useKits, KitList, KitMain } from './Kits.jsx'
 
 /** State shared by the Blender tab's center view and its AI chat. */
 export function useModelStudio() {
@@ -12,7 +13,7 @@ export function useModelStudio() {
   const [assetId, setAssetId] = useState(null)
   const [asset, setAsset] = useState(null)
   const [pendingPrompt, setPendingPrompt] = useState(null) // { id, text }: send to the AI once the new asset is open
-  const [section, setSection] = useState('models') // models | motions
+  const [section, setSection] = useState('models') // models | motions | kits
 
   const refreshList = useCallback(async () => {
     const l = await window.gs.library.list()
@@ -68,6 +69,7 @@ export function useModelStudio() {
 export default function BlenderStudio({ studio, project }) {
   const { blender, list, assetId, select, asset, refresh, refreshList, section, setSection } = studio
   const motions = useMotions()
+  const kitsState = useKits()
   const [view, setView] = useState('model') // model | image | script
   const [creating, setCreating] = useState(false)
 
@@ -81,9 +83,12 @@ export default function BlenderStudio({ studio, project }) {
           <div className="seg lib-seg">
             <button className={section === 'models' ? 'on' : ''} onClick={() => setSection('models')}>Models</button>
             <button className={section === 'motions' ? 'on' : ''} onClick={() => setSection('motions')}>Motions</button>
+            <button className={section === 'kits' ? 'on' : ''} onClick={() => setSection('kits')}>Kits</button>
           </div>
           {section === 'motions' ? (
             <MotionList m={motions} />
+          ) : section === 'kits' ? (
+            <KitList k={kitsState} />
           ) : (
             <>
           <div className="lib-head">
@@ -115,6 +120,8 @@ export default function BlenderStudio({ studio, project }) {
         <section className="studio-main">
           {section === 'motions' ? (
             <MotionMain m={motions} studio={studio} />
+          ) : section === 'kits' ? (
+            <KitMain k={kitsState} />
           ) : !asset ? (
             <div className="studio-empty muted">{list?.length ? 'Pick a model on the left.' : 'Click + New to start your first model.'}</div>
           ) : (

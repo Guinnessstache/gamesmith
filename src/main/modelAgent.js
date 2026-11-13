@@ -6,6 +6,7 @@ import { chat, extractTextToolCalls, splitThinking, supportsVision } from './aiC
 import fs from 'node:fs'
 import { applyEdit, parseArgs } from './agent.js'
 import * as library from './library.js'
+import * as kits from './kits.js'
 
 const HISTORY_TURNS = 10
 const MAX_REVIEWS = 3 // how many times the AI looks at a render in one request
@@ -30,6 +31,29 @@ function motionList() {
   rig.apply_motion("Sword swing", clip="Attack", start=0.4, end=1.6, speed=1.2)   # rename, trim (seconds), speed up
 Available: ${list.map((m) => `"${m.name}" (${m.seconds} s${m.loop ? ', loops' : ''})`).join(', ')}.
 Prefer a recorded motion when the user asks for that move; you can mix them with keyframed clips.`
+}
+
+function kitsSection() {
+  let list = []
+  let more = []
+  try {
+    list = kits.listKits()
+    more = kits.catalog().packs.filter((p) => !p.installed)
+  } catch {
+    return ''
+  }
+  if (!list.length && !more.length) return ''
+  return `
+KITS: READY-MADE PARTS (use them!)
+Kits are model packs: their parts are well made and match each other in style, and building from them looks far
+better than modeling the same thing from boxes. For buildings, props, furniture, nature, vehicles, weapons,
+animals, characters or dungeons, look for parts first with find_parts, then place them:
+${list.length ? `Installed:\n${list.map((k) => `  ${k.id}: ${k.name} (${k.parts} parts, ${k.source})`).join('\n')}` : 'No kits are installed yet.'}
+${more.length ? `Free kits the app can add (add_kit downloads one; it takes a minute or two):\n${more.map((p) => `  ${p.id}: ${p.name} (${p.about.toLowerCase()})`).join('\n')}` : ''}
+  obj = part("kit/part", location=(x, y, z), rotation=(0, 0, 90), scale=1.0)   # rotation in degrees
+  Sizes from find_parts are in meters (x, y, z); modular kit pieces usually snap on a grid of their own width.
+  part() returns the object (or a list); you can move, scale, color (assign) or rig.attach it like your own objects.
+`
 }
 
 function systemPrompt(meta, script, { vision = false, references = 0 } = {}) {
@@ -145,7 +169,7 @@ Characters made from a recording ("a character that looks like me") pass the per
 and may show a photo: photo("Face photo", asset_file("face.png")) is an image material for a plane. Keep those
 measurements, colors and the face plane unless the user asks to change them.
 ${motionList()}
-
+${kitsSection()}
 Work in small steps: change the script, call build_model, read the numbers (is the size right? is min_z 0?), then improve.
 When done, briefly tell the user what you made in plain words (one or two sentences). Don't paste the script.
 
@@ -199,6 +223,22 @@ export const MODEL_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'find_parts',
+      description: 'Search the installed kits (model packs) for ready-made parts. Returns kit/part names with their size in meters, for part("kit/part").',
+      parameters: { type: 'object', properties: { query: { type: 'string', description: 'e.g. "tower", "wall door", "tree", "barrel"' } }, required: ['query'] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_kit',
+      description: 'Download and install one of the free kits listed under "Free kits the app can add", so its parts can be used. Then use find_parts.',
+      parameters: { type: 'object', properties: { kit: { type: 'string', description: 'The kit id, e.g. "nature" or "medieval-village"' } }, required: ['kit'] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'build_model',
       description: 'Run model.py in Blender. Returns measurements (size in meters, triangles, materials) or the error with its line.',
       parameters: { type: 'object', properties: {} }
@@ -230,7 +270,7 @@ export function formatBuild(r) {
  * Run one modeling request. deps: { id, ai, build: () => Promise<buildResult>, history, userText, emit, signal }
  * Returns { reply, changed, build }.
  */
-export async function runModelAgent({ id, ai, build, findTextures, history = [], userText, emit = () => {}, signal }) {
+export async function runModelAgent({ id, ai, build, findTextures, findParts, addKit, history = [], userText, emit = () => {}, signal }) {
   if (!ai.model) throw new Error('No model selected. Open Settings and pick a model.')
   const meta = library.readMeta(id)
   // Models that can see get the renders (and any reference images) to check their work against.
@@ -291,6 +331,18 @@ export async function runModelAgent({ id, ai, build, findTextures, history = [],
         if (!findTextures) return 'Texture search is unavailable; use one of the ids listed in the instructions.'
         const found = await findTextures(String(args.query || ''))
         return found.length ? found.map((t) => `${t.id}: ${t.name}${t.tags?.length ? ` (${t.tags.slice(0, 5).join(', ')})` : ''}`).join('\n') : 'Nothing found. Try a simpler word.'
+      }
+      case 'find_parts': {
+        const found = findParts ? findParts(String(args.query || '')) : []
+        if (found.length) return found.map(kits.formatPart).join('\n')
+        const packs = addKit ? kits.suggestPacks(String(args.query || '')) : []
+        const tip = packs.length ? ` These free kits (not installed) have matching models; add one with add_kit:\n${packs.map((p) => `  ${p.id}: ${p.name} (${p.about.toLowerCase()}, ${p.models} models)`).join('\n')}` : ' Try another word, or model it yourself.'
+        return (kits.listKits().length ? `No installed parts match "${args.query}".` : 'No kits are installed yet.') + tip
+      }
+      case 'add_kit': {
+        if (!addKit) return 'Adding kits is unavailable here; model it yourself.'
+        const kit = await addKit(String(args.kit || '').trim(), (text) => emit({ type: 'status', text }))
+        return `Installed ${kit.name} as kit "${kit.id}" (${kit.parts.length} parts). Use find_parts to look for the parts you need.`
       }
       default:
         throw new Error(`Unknown tool "${name}". Available: ${MODEL_TOOLS.map((t) => t.function.name).join(', ')}`)

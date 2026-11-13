@@ -106,7 +106,7 @@ const result = await runModelAgent({
   build: () => library.build('treasure-chest', { blenderPath: exe, runner, commitMessage: false })
 })
 server.close()
-ok(requests[0].messages[0].content.includes('Treasure Chest') && requests[0].tools.length === 5 && requests[0].tools.some((t) => t.function.name === 'find_textures'), 'modeling AI gets the asset brief and 5 tools (including texture search)')
+ok(requests[0].messages[0].content.includes('Treasure Chest') && requests[0].tools.length === 7 && ['find_textures', 'find_parts', 'add_kit'].every((n) => requests[0].tools.some((t) => t.function.name === n)), 'modeling AI gets the asset brief and 7 tools (including texture and kit part search, and adding kits)')
 const fixMsg = requests[2].messages.at(-1).content
 ok(/failed/.test(fixMsg) && /AttributeError/.test(fixMsg) && /line 6/.test(fixMsg), 'automatic build found the error and sent it back with the line')
 ok(result.build?.ok, 'second build succeeded')
@@ -342,6 +342,185 @@ kid.obj.location.x = 1.2
   const gj = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'))
   ok(gj.skins?.length >= 2 && gj.skins[0].joints.length === 17 && gj.meshes.some((m) => m.primitives.some((p) => p.attributes.JOINTS_0 && p.attributes.WEIGHTS_0)), 'the .glb carries the skeleton and skin weights')
   ok(cb.ok && cb.stats.clips?.some((c) => c.name === 'Wave'), 'clips play on it')
+}
+
+// ---- kits: model packs imported for the modeling AI ----
+{
+  const kitsMod = await import('../src/main/kits.js')
+  const { zipSync } = await import('fflate')
+  const kitRoot = join(tmp, 'kits')
+  kitsMod.configure(() => kitRoot)
+  kitsMod.setRunnerPath(runner)
+  // two models for the pack: a crate, and a rigged swinging sign with an animation
+  const mk = async (code) => {
+    const f = join(tmp, `kitsrc-${Math.random().toString(36).slice(2)}`)
+    fs.mkdirSync(f)
+    fs.writeFileSync(join(f, 'm.py'), code)
+    const r = await blender.run({ blender: exe, runner, script: join(f, 'm.py'), outGlb: join(f, 'm.glb'), outPng: '-' })
+    assert.ok(r.ok, r.error)
+    return fs.readFileSync(join(f, 'm.glb'))
+  }
+  const crate = await mk('bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.5))\nassign(bpy.context.object, mat("Wood", (0.5, 0.3, 0.1)))\n')
+  const sign = await mk(`rig = Rig(name="Sign")
+rig.bone("Post", (0, 0, 0), (0, 0, 1.5))
+rig.bone("Board", (0, 0, 1.5), (0, 0, 1.0), parent="Post")
+bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 1.25))
+b = bpy.context.object
+b.scale = (0.6, 0.05, 0.4)
+rig.attach(b, "Board")
+bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=1.5, location=(0, 0.1, 0.75))
+rig.attach(bpy.context.object, "Post")
+with rig.clip("Swing", seconds=1.0):
+    rig.pose("Board", at=0.0, rotate=(0, 0, 0))
+    rig.pose("Board", at=0.5, rotate=(20, 0, 0))
+    rig.pose("Board", at=1.0, rotate=(0, 0, 0))
+`)
+  const zipPath = join(tmp, 'kenney_test-kit.zip')
+  fs.writeFileSync(
+    zipPath,
+    zipSync({
+      'Test Kit/License.txt': new TextEncoder().encode('Test Kit by Kenney\nLicense: (Creative Commons Zero, CC0)\n'),
+      'Test Kit/Models/GLB format/crate-small.glb': crate,
+      'Test Kit/Models/GLB format/sign-swinging.glb': sign,
+      'Test Kit/Models/FBX format/crate-small.fbx': new TextEncoder().encode('not really an fbx: should be skipped, GLB is preferred'),
+      'Test Kit/Previews/crate-small.png': new Uint8Array([1, 2, 3])
+    })
+  )
+  const steps = []
+  const kit = await kitsMod.importKit(zipPath, { blenderPath: exe, onProgress: (p) => steps.push(p) })
+  ok(kit.parts.length === 2 && kit.format === '.glb' && !kit.failed.length, `pack imported: GLB chosen over FBX, ${kit.parts.length} parts`)
+  ok(kit.source === 'Kenney' && kit.license === 'CC0' && kit.id === 'test-kit', `source and license recognized (${kit.source}, ${kit.license}, id ${kit.id})`)
+  const signPart = kit.parts.find((p) => p.name === 'sign-swinging')
+  ok(signPart?.rigged && signPart.animations.includes('Swing') && Math.abs(kit.parts.find((p) => p.name === 'crate-small').size[2] - 1) < 0.01, 'parts measured; the rigged one lists its animation')
+  ok(fs.existsSync(join(kitRoot, 'test-kit', 'thumbs', 'crate-small.png')) && !fs.existsSync(join(kitRoot, 'test-kit', 'source')), 'thumbnails made, unpacked source cleaned up')
+  ok(steps.some((p) => p.phase === 'Converting' && p.done === 2 && p.total === 2), 'progress reported while converting')
+  ok(kitsMod.findParts('crates')[0]?.part === 'crate-small' && /test-kit\/crate-small: 1 x 1 x 1 m/.test(kitsMod.formatPart(kitsMod.findParts('crate')[0])), 'parts found by name (plural too)')
+
+  const uses = await library.create('Kit test', '')
+  library.writeScript(uses.id, `for i in range(3):
+    part("test-kit/crate-small", location=(i * 1.2, 0, 0), rotation=(0, 0, i * 15))
+s = part("sign-swinging", location=(0, 2, 0), scale=0.5)
+assert s.type == "ARMATURE"
+try:
+    part("test-kit/no-such-thing")
+    raise SystemExit("expected an error")
+except ValueError as e:
+    assert "find_parts" in str(e)
+`)
+  const kb = await library.build(uses.id, { blenderPath: exe, runner, commitMessage: false, kitsDir: kitRoot })
+  ok(kb.ok, `a model built from kit parts${kb.ok ? '' : ': ' + kb.error + ' ' + (kb.where || '')}`)
+  ok(kb.ok && kb.stats.objects === 5 && kb.stats.clips?.some((c) => c.name === 'Swing') && Math.abs(kb.stats.size_m.width - 3.583) < 0.02, `parts placed and the animation kept (${kb.stats?.objects} objects, ${kb.stats?.size_m?.width} m wide, clips ${JSON.stringify(kb.stats?.clips)})`)
+  ok(fs.readFileSync(join(library.dir(), '.gitignore'), 'utf8').includes('kits/'), 'kits stay out of the GitHub backup')
+  kitsMod.removeKit('test-kit')
+  ok(kitsMod.listKits().length === 0, 'kit removed')
+  await library.remove(uses.id)
+
+  // ---- the built-in catalog: one click downloads a pack (no manual downloads) ----
+  const real = JSON.parse(fs.readFileSync(join(root, 'resources', 'kits', 'catalog.json'), 'utf8'))
+  ok(
+    real.packs.length >= 30 &&
+      /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[0-9a-f]{40}\//.test(real.base) &&
+      real.packs.every((p) => p.license === 'CC0' && p.files.length && p.files.every((f) => /\.glb$/i.test(f.f) && /^[0-9a-f]{40}$/.test(f.sha))) &&
+      new Set(real.packs.map((p) => p.id)).size === real.packs.length,
+    `built-in catalog: ${real.packs.length} CC0 packs, ${real.packs.reduce((n, p) => n + p.files.length, 0)} models, pinned to one commit, every file hashed`
+  )
+  const crypto = await import('node:crypto')
+  const sha = (b) => crypto.createHash('sha1').update(`blob ${b.length}\0`).update(b).digest('hex')
+  const served = { 'Crate Small.glb': crate, 'Sign_Swinging.glb': sign }
+  const hits = {}
+  let damage = false
+  const files = http.createServer((req, res) => {
+    const name = decodeURIComponent(req.url.split('/').pop())
+    hits[name] = (hits[name] || 0) + 1
+    if (name === 'Crate Small.glb' && hits[name] === 1) return res.writeHead(503).end() // a hiccup: retried
+    if (!served[name]) return res.writeHead(404).end()
+    res.writeHead(200).end(damage ? Buffer.from('garbage') : served[name])
+  })
+  await new Promise((r) => files.listen(0, '127.0.0.1', r))
+  const catFile = join(tmp, 'catalog.json')
+  fs.writeFileSync(
+    catFile,
+    JSON.stringify({
+      base: 'https://example.invalid/',
+      credit: 'Test models, CC0.',
+      packs: [
+        { id: 'props', name: 'Test Props', about: 'Crates and signs', source: 'Quaternius', url: 'https://quaternius.com', license: 'CC0', dir: 'props_pack', files: Object.entries(served).map(([f, b]) => ({ f, sha: sha(b) })) },
+        { id: 'trees', name: 'Test Trees', about: 'Trees and rocks', source: 'Quaternius', url: '', license: 'CC0', dir: 'trees', files: [{ f: 'Tree.glb', sha: '0'.repeat(40) }] }
+      ]
+    })
+  )
+  kitsMod.setCatalogPath(catFile)
+  process.env.GAMESMITH_KIT_BASE = `http://127.0.0.1:${files.address().port}/`
+  ok(kitsMod.catalog().packs.every((p) => !p.installed) && kitsMod.catalog().packs[0].sample.includes('Crate Small'), 'catalog lists the packs, none installed yet')
+  ok(kitsMod.suggestPacks('wooden crate')[0]?.id === 'props' && !kitsMod.suggestPacks('spaceship').length, 'the AI is pointed at packs that have what it looked for')
+
+  const failing = await kitsMod.installKit('trees', { blenderPath: exe }).then(() => null, (e) => e)
+  ok(/Couldn't download Test Trees/.test(failing?.message) && !fs.existsSync(join(kitRoot, 'trees')), 'a failed download says so and leaves nothing behind')
+  damage = true
+  const damaged = await kitsMod.installKit('props', { blenderPath: exe }).then(() => null, (e) => e)
+  ok(/damaged/.test(damaged?.message) && !fs.existsSync(join(kitRoot, 'props')), 'a damaged download is caught by its hash')
+  damage = false
+  const ac = new AbortController()
+  ac.abort()
+  const cancelled = await kitsMod.installKit('props', { blenderPath: exe, signal: ac.signal }).then(() => null, (e) => e)
+  ok(cancelled?.message === 'Cancelled' && !fs.existsSync(join(kitRoot, 'props')), 'adding a kit can be cancelled')
+
+  // the modeling AI looks for parts, finds none, adds the kit itself and uses it
+  const agentSteps = [
+    { tool: { name: 'find_parts', args: { query: 'crate' } } },
+    { tool: { name: 'add_kit', args: { kit: 'props' } } },
+    { tool: { name: 'find_parts', args: { query: 'crate' } } },
+    { tool: { name: 'write_script', args: { content: 'part("props/crate-small", location=(0, 0, 0))\npart("props/crate-small", location=(1.1, 0, 0))\n' } } },
+    { tool: { name: 'build_model', args: {} } },
+    { text: 'Two crates from the Test Props kit.' }
+  ]
+  let at = 0
+  const seen = []
+  const ai = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      const parsed = JSON.parse(body)
+      if (parsed.stream === false) return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ choices: [{ message: { content: 'no' } }] }))
+      seen.push(parsed)
+      const step = agentSteps[at++] || { text: 'Done.' }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)
+      if (step.tool) {
+        chunk({ tool_calls: [{ index: 0, id: `c${at}`, type: 'function', function: { name: step.tool.name, arguments: JSON.stringify(step.tool.args) } }] })
+        chunk({}, 'tool_calls')
+      } else {
+        chunk({ content: step.text })
+        chunk({}, 'stop')
+      }
+      res.end('data: [DONE]\n\n')
+    })
+  })
+  await new Promise((r) => ai.listen(0, '127.0.0.1', r))
+  const crates = await library.create('Crates', '')
+  const statuses = []
+  const ar = await runModelAgent({
+    id: crates.id,
+    ai: { baseUrl: `http://127.0.0.1:${ai.address().port}/v1`, model: 'mock', maxSteps: 12, autoFixRounds: 2, vision: 'off' },
+    userText: 'Two crates',
+    emit: (e) => e.type === 'status' && statuses.push(e.text),
+    build: () => library.build(crates.id, { blenderPath: exe, runner, commitMessage: false, kitsDir: kitRoot }),
+    findParts: (q) => kitsMod.findParts(q),
+    addKit: (id, status) => kitsMod.installKit(id, { blenderPath: exe, onProgress: (ev) => status(`${ev.phase}: ${ev.done} of ${ev.total}`) })
+  })
+  ai.close()
+  files.close()
+  const toolText = (i) => seen[i].messages.at(-1).content
+  ok(seen[0].messages[0].content.includes('props: Test Props') && /add_kit/.test(toolText(1)) && /props: Test Props/.test(toolText(1)), 'with nothing installed, find_parts points the AI at the matching free kit')
+  ok(/Installed Test Props as kit "props" \(2 parts\)/.test(toolText(2)) && statuses.some((t) => /Downloading: 2 of 2/.test(t)), 'the AI added the kit itself, with progress shown')
+  ok(/props\/crate-small/.test(toolText(3)) && ar.build?.ok && ar.build.stats.objects === 2, `then found and used its parts (${ar.build?.stats?.objects} objects)`)
+  const k2 = kitsMod.readKit('props')
+  ok(k2.catalogId === 'props' && k2.source === 'Quaternius' && k2.license === 'CC0' && kitsMod.catalog().packs[0].installed === 'props' && hits['Crate Small.glb'] >= 2, 'installed kit is marked in the catalog (and the flaky download was retried)')
+  const again = await kitsMod.installKit('props', { blenderPath: exe })
+  ok(again.id === 'props' && kitsMod.listKits().length === 1, 'adding an installed kit again does nothing')
+  kitsMod.removeKit('props')
+  await library.remove(crates.id)
+  delete process.env.GAMESMITH_KIT_BASE
 }
 
 // ---- detailed models: smooth(), Poly Haven textures, terrain() ----

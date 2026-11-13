@@ -15,6 +15,7 @@ import * as importer from './importer.js'
 import { GameServer } from './gameServer.js'
 import * as blender from './blender.js'
 import * as library from './library.js'
+import * as kits from './kits.js'
 import { runModelAgent } from './modelAgent.js'
 import * as mocap from './mocap.js'
 import { Updater } from './updater.js'
@@ -547,6 +548,7 @@ async function buildAsset(id, commitMessage, { views } = {}) {
     signal: modelAbort?.signal || buildAbort?.signal,
     commitMessage,
     texturesDir: assets.texturesDir(),
+    kitsDir: kits.kitsDir(),
     beforeRun: async (script) => {
       return assets.ensureTextures(assets.texturesInScript(script))
     }
@@ -637,7 +639,13 @@ handle('model:run', async (id, userText) => {
       emit,
       signal: modelAbort.signal,
       build: (opts) => buildAsset(id, false, opts),
-      findTextures: (q) => assets.search(q, 'textures', 8)
+      findTextures: (q) => assets.search(q, 'textures', 8),
+      findParts: (q) => kits.findParts(q, 25),
+      addKit: (packId, status) => {
+        const stop = () => kitAbort?.abort()
+        modelAbort?.signal.addEventListener('abort', stop, { once: true })
+        return installKit(packId, (ev) => status(kitStatus(ev))).finally(() => modelAbort?.signal.removeEventListener('abort', stop))
+      }
     })
     const oid = await localCommit(`AI: ${userText.replace(/\s+/g, ' ').slice(0, 72)}`).catch(() => null)
     history.push({ role: 'assistant', content: result.reply, time: Date.now(), build: result.build ? { ok: result.build.ok, error: result.build.error } : null, commit: oid, steps })
@@ -702,6 +710,78 @@ handle('library:createPerson', async (person, faceBytes) => {
   send('library:changed', { id: meta.id })
   return meta.id
 })
+// ---------- kits: model packs for the modeling AI ----------
+handle('kits:list', () => kits.listKits())
+handle('kits:get', (id) => {
+  const k = kits.readKit(id)
+  return {
+    ...k,
+    parts: k.parts.map((p) => {
+      const t = kits.thumbnail(id, p.name)
+      return { ...p, thumb: t ? `data:image/png;base64,${t.toString('base64')}` : null }
+    })
+  }
+})
+handle('kits:remove', (id) => kits.removeKit(id))
+handle('kits:catalog', () => kits.catalog())
+let kitImporting = false
+let kitAbort = null
+const kitStatus = (ev) => `${ev.phase} ${ev.name || 'the kit'}${ev.total ? `: ${ev.done} of ${ev.total} models` : '…'}`
+/** Download and convert a catalog pack (from the Kits screen or the modeling AI), one at a time. */
+async function installKit(packId, onProgress = () => {}) {
+  if (kitImporting) throw new Error('Another kit is being added. Wait for it to finish.')
+  const pack = kits.catalog().packs.find((p) => p.id === packId)
+  if (!pack) throw new Error(`There's no kit "${packId}". Pick one from the list of free kits.`)
+  if (pack.installed) return kits.readKit(pack.installed)
+  kitImporting = true
+  kitAbort = new AbortController()
+  try {
+    return await kits.installKit(packId, {
+      blenderPath: requireBlender(),
+      fetchFn: net.fetch,
+      signal: kitAbort.signal,
+      onProgress: (ev) => {
+        const e = { ...ev, file: pack.name, name: pack.name, packId, index: 0, count: 1 }
+        send('kits:progress', e)
+        onProgress(e)
+      }
+    })
+  } finally {
+    kitImporting = false
+    kitAbort = null
+    send('kits:progress', null)
+    send('kits:changed', { packId })
+  }
+}
+handle('kits:install', async (packId) => {
+  const kit = await installKit(packId)
+  return { id: kit.id, name: kit.name, parts: kit.parts.length, failed: kit.failed.length, license: kit.license }
+})
+handle('kits:cancel', () => kitAbort?.abort())
+handle('kits:import', async (paths) => {
+  if (kitImporting) throw new Error('Already adding a kit. Wait for it to finish.')
+  if (!paths?.length) {
+    const r = await dialog.showOpenDialog(win, { title: 'Import a model pack (Kenney, Quaternius...)', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Zip archives', extensions: ['zip'] }] })
+    if (r.canceled) return []
+    paths = r.filePaths
+  }
+  kitImporting = true
+  const done = []
+  try {
+    for (const [i, p] of paths.entries()) {
+      const name = p.split(/[\\/]/).pop()
+      const kit = await kits.importKit(p, {
+        blenderPath: requireBlender(),
+        onProgress: (ev) => send('kits:progress', { ...ev, file: name, index: i, count: paths.length })
+      })
+      done.push({ id: kit.id, name: kit.name, parts: kit.parts.length, failed: kit.failed.length, license: kit.license })
+    }
+  } finally {
+    kitImporting = false
+    send('kits:progress', null)
+  }
+  return done
+})
 handle('motions:pickVideo', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Choose a video of the move',
@@ -730,6 +810,9 @@ app.whenReady().then(async () => {
   assets.polyPizza.configureKeyStore(stores.polypizza)
   deploy.configureRenderStore(stores.render)
   library.configure(getSettings().libraryDir)
+  kits.configure(() => library.dir() && join(library.dir(), 'kits'))
+  kits.setRunnerPath(runnerPy())
+  kits.setCatalogPath(process.env.GAMESMITH_KIT_CATALOG || join(resourcesDir, 'kits', 'catalog.json'))
   // Tests run Electron on a script, which reports its own version; give it ours.
   if (process.env.GAMESMITH_APP_VERSION && typeof app.setVersion === 'function') app.setVersion(process.env.GAMESMITH_APP_VERSION)
   try {

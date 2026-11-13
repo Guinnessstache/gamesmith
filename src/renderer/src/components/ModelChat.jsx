@@ -14,6 +14,8 @@ const TOOL_LABELS = {
   write_script: () => 'Wrote the script',
   edit_script: () => 'Edited the script',
   find_textures: (a) => `Looked for textures${a?.query ? `: ${a.query}` : ''}`,
+  find_parts: () => 'Looked for kit parts',
+  add_kit: (a) => `Added the ${a.kit || ''} kit`,
   build_model: () => 'Built it in Blender',
   look_at_render: () => 'Looked at the render'
 }

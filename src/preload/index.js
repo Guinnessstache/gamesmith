@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 // Every call returns the data or throws an Error with a readable message.
 async function call(channel, ...args) {
@@ -116,6 +116,18 @@ contextBridge.exposeInMainWorld('gs', {
     referenceData: (id, name) => call('library:referenceData', id, name),
     sync: () => call('library:sync'),
     onChanged: (fn) => on('library:changed', fn)
+  },
+  kits: {
+    list: () => call('kits:list'),
+    get: (id) => call('kits:get', id),
+    remove: (id) => call('kits:remove', id),
+    import: (paths) => call('kits:import', paths),
+    catalog: () => call('kits:catalog'),
+    install: (packId) => call('kits:install', packId),
+    cancel: () => call('kits:cancel'),
+    onChanged: (fn) => on('kits:changed', fn),
+    pathFor: (file) => webUtils.getPathForFile(file),
+    onProgress: (fn) => on('kits:progress', fn)
   },
   model: {
     run: (id, text) => call('model:run', id, text),

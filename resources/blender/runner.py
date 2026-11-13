@@ -13,6 +13,7 @@ import bmesh
 import json
 import math
 import os
+import re
 import sys
 import traceback
 from mathutils import Euler, Matrix, Quaternion, Vector
@@ -727,6 +728,87 @@ def clips_info():
 HELPERS = {"bpy": bpy, "bmesh": bmesh, "math": math, "Vector": Vector, "mat": mat, "assign": assign, "shade_smooth": shade_smooth, "Rig": Rig, "FPS": FPS, "Matrix": Matrix, "Quaternion": Quaternion, "Euler": Euler, "LM": LM, "motions_dir": motions_dir, "asset_file": asset_file, "photo": photo,
            "smooth": smooth, "texture": texture, "terrain": terrain, "ground": ground, "box_uv": box_uv}
 
+
+# ---------- kit parts (Kenney, Quaternius... packs the user imported) ----------
+KITS_DIR = os.environ.get("GAMESMITH_KITS", "")
+
+
+def _part_file(ref):
+    if not KITS_DIR or not os.path.isdir(KITS_DIR):
+        raise ValueError("No kits are installed. The user can add model packs in the Blender tab, under Kits.")
+    if "/" in ref:
+        kit, name = ref.split("/", 1)
+        f = os.path.join(KITS_DIR, kit, "parts", name + ".glb")
+        if os.path.isfile(f):
+            return f
+        raise ValueError(f'part("{ref}"): no such part. Use find_parts to look up names.')
+    hits = [os.path.join(KITS_DIR, k, "parts", ref + ".glb") for k in sorted(os.listdir(KITS_DIR))]
+    hits = [h for h in hits if os.path.isfile(h)]
+    if len(hits) == 1:
+        return hits[0]
+    raise ValueError(f'part("{ref}"): {"no such part" if not hits else "several kits have it; write kit/part"}. Use find_parts.')
+
+
+def _drop_bone_shapes(objs):
+    """The glTF importer adds a display shape (an "Icosphere" mesh) for bones; it isn't part of the model."""
+    shapes = set()
+    for o in objs:
+        if o.type == "ARMATURE" and o.pose:
+            for pb in o.pose.bones:
+                if pb.custom_shape is not None:
+                    shapes.add(pb.custom_shape)
+                    pb.custom_shape = None
+    names = [s.name for s in shapes]
+    for n in names:
+        if n in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[n], do_unlink=True)
+    return names
+
+
+def part(ref, location=(0, 0, 0), rotation=(0, 0, 0), scale=1.0, name=None):
+    """A ready-made model from an imported kit, e.g. part("castle-kit/tower-square", location=(2, 0, 0)).
+    rotation: degrees about X, Y, Z. scale: a number or (x, y, z). Returns the object (or a list when
+    the part has several). Rigged parts (characters) keep their skeleton and animations."""
+    before = set(bpy.data.objects)
+    actions_before = set(bpy.data.actions)
+    bpy.ops.import_scene.gltf(filepath=_part_file(ref))
+    # the part's own animations become clips of this model (looping unless they sound one-off)
+    for a in bpy.data.actions:
+        if a not in actions_before:
+            a.use_fake_user = True
+            a["gs_loop"] = not re.search(r"attack|hit|death|die|jump|shoot|punch|kick|throw|open|close|use|interact|pick|fall|slash|cast", a.name, re.I)
+            a["gs_seconds"] = round((a.frame_range[1] - a.frame_range[0]) / FPS, 3)
+    new = [o for o in bpy.data.objects if o not in before]
+    _drop_bone_shapes(new)
+    new = [o for o in bpy.data.objects if o not in before]
+    rigged = any(o.type == "ARMATURE" for o in new)
+    if not rigged:
+        # flatten: keep the meshes where they are, drop the empty nodes glTF adds
+        bpy.context.view_layer.update()
+        for o in new:
+            if o.type == "MESH" and o.parent is not None:
+                mw = o.matrix_world.copy()
+                o.parent = None
+                o.matrix_world = mw
+        for o in [o for o in new if o.type != "MESH"]:
+            new.remove(o)
+            bpy.data.objects.remove(o, do_unlink=True)
+    top = [o for o in new if o.parent not in new]
+    s = scale if isinstance(scale, (tuple, list)) else (scale, scale, scale)
+    m = Matrix.LocRotScale(Vector(location), Euler([math.radians(a) for a in rotation]), Vector(s))
+    bpy.context.view_layer.update()
+    for o in top:
+        o.matrix_world = m @ o.matrix_world
+    label = name or ref.split("/")[-1]
+    for i, o in enumerate(o for o in new if o.type in ("MESH", "ARMATURE")):
+        o.name = label if i == 0 else f"{label}.{i}"
+    meshes = [o for o in new if o.type == "MESH"]
+    if rigged:
+        return [o for o in new if o.type == "ARMATURE"][0]
+    return meshes[0] if len(meshes) == 1 else meshes
+
+
+HELPERS["part"] = part
 
 # Stylized characters live in character.py (next to this file).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -36,7 +36,7 @@ assign(bpy.context.object, mat("Placeholder", (0.6, 0.6, 0.65)))
 `
 
 // Videos of you stay on this computer; only the tracked motion goes to GitHub.
-const GITIGNORE = '.gamesmith/\n*.tmp.glb\n*.tmp.png\nmotions/*/video.*\n*/views.png\n*/references/\n'
+const GITIGNORE = '.gamesmith/\n*.tmp.glb\n*.tmp.png\nmotions/*/video.*\n*/views.png\n*/references/\nkits/\n'
 
 export async function ensure() {
   fs.mkdirSync(root, { recursive: true })
@@ -53,7 +53,7 @@ export async function ensure() {
   const gi = join(root, '.gitignore')
   const cur = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : ''
   let rules = cur
-  for (const rule of ['motions/*/video.*', '*/views.png', '*/references/']) {
+  for (const rule of ['motions/*/video.*', '*/views.png', '*/references/', 'kits/']) {
     if (!rules.includes(rule)) rules += (rules.endsWith('\n') || !rules ? '' : '\n') + rule + '\n'
   }
   if (rules !== cur) fs.writeFileSync(gi, rules)
@@ -133,13 +133,13 @@ export function files(id) {
  * Run the asset's script in Blender. Output goes to temporary files first, so a
  * failed build never replaces the last good model.
  */
-export async function build(id, { blenderPath, runner, signal, commitMessage, texturesDir, beforeRun, views } = {}) {
+export async function build(id, { blenderPath, runner, signal, commitMessage, texturesDir, kitsDir, beforeRun, views } = {}) {
   const missing = beforeRun ? await beforeRun(readScript(id)) : []
   const tmpGlb = safe(id, 'model.tmp.glb')
   const tmpPng = safe(id, 'preview.tmp.png')
   const viewsPng = views ? safe(id, 'views.png') : null
   if (viewsPng) fs.rmSync(viewsPng, { force: true })
-  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot(), texturesDir, outViews: viewsPng })
+  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot(), texturesDir, kitsDir, outViews: viewsPng })
   if (r.ok && viewsPng && fs.existsSync(viewsPng)) r.views = viewsPng
   if (missing?.length && r.ok) r.stats.missingTextures = missing
   if (!r.ok) {

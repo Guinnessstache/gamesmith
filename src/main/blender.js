@@ -167,16 +167,35 @@ export async function download(userDataDir, { onProgress = () => {}, signal, fet
  * Run an asset script. Returns { ok, stats } or { ok:false, error, where, log }.
  * runner.py prints one line starting with GAMESMITH_RESULT.
  */
-export function run({ blender, runner, script, outGlb, outPng = '-', size = 384, timeoutMs = 180000, signal, motionsDir, texturesDir, outViews }) {
+export function run({ blender, runner, script, outGlb, outPng = '-', size = 384, timeoutMs = 180000, signal, motionsDir, texturesDir, kitsDir, outViews }) {
+  fs.mkdirSync(dirname(outGlb), { recursive: true })
+  const args = [script, outGlb, outPng, String(size), outViews || '-']
+  const env = { ...(motionsDir ? { GAMESMITH_MOTIONS: motionsDir } : {}), ...(texturesDir ? { GAMESMITH_TEXTURES: texturesDir } : {}), ...(kitsDir ? { GAMESMITH_KITS: kitsDir } : {}) }
+  return runPython({ blender, py: runner, args, env, timeoutMs, signal })
+}
+
+/**
+ * Run a Gamesmith Python script in background Blender. It prints GAMESMITH_RESULT <json> (and may print
+ * GAMESMITH_PROGRESS <done> <total>, passed to onProgress).
+ */
+export function runPython({ blender, py, args = [], env = {}, timeoutMs = 180000, signal, onProgress }) {
   return new Promise((resolve) => {
-    fs.mkdirSync(dirname(outGlb), { recursive: true })
-    const args = ['-b', '--factory-startup', '--python-exit-code', '3', '--python', runner, '--', script, outGlb, outPng, String(size), outViews || '-']
-    const env = { ...process.env, ...(motionsDir ? { GAMESMITH_MOTIONS: motionsDir } : {}), ...(texturesDir ? { GAMESMITH_TEXTURES: texturesDir } : {}) }
-    const child = spawn(blender, args, { windowsHide: true, env })
+    const child = spawn(blender, ['-b', '--factory-startup', '--python-exit-code', '3', '--python', py, '--', ...args], { windowsHide: true, env: { ...process.env, ...env } })
     let out = ''
+    let partial = ''
     const take = (d) => {
-      out += d.toString()
+      const text = d.toString()
+      out += text
       if (out.length > 400000) out = out.slice(-200000)
+      if (onProgress) {
+        partial += text
+        const lines = partial.split('\n')
+        partial = lines.pop()
+        for (const l of lines) {
+          const m = /^GAMESMITH_PROGRESS (\d+) (\d+)/.exec(l)
+          if (m) onProgress({ done: +m[1], total: +m[2] })
+        }
+      }
     }
     child.stdout.on('data', take)
     child.stderr.on('data', take)

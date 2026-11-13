@@ -115,6 +115,16 @@ const check = (cond, msg) => {
 
 mock.listen(0, '127.0.0.1', async () => {
   await new Promise((r) => updates.listen(0, '127.0.0.1', r))
+  const kitFiles = {}
+  const kitCatalog = path.join(os.tmpdir(), `gs-smoke-kits-${process.pid}.json`)
+  fs.writeFileSync(kitCatalog, JSON.stringify({ base: '', packs: [] }))
+  const kitServer = http.createServer((req, res) => {
+    const b = kitFiles[decodeURIComponent(req.url.split('/').pop())]
+    b ? res.end(b) : res.writeHead(404).end()
+  })
+  await new Promise((r) => kitServer.listen(0, '127.0.0.1', r))
+  process.env.GAMESMITH_KIT_BASE = `http://127.0.0.1:${kitServer.address().port}/`
+  process.env.GAMESMITH_KIT_CATALOG = kitCatalog
   process.env.GAMESMITH_UPDATE_URL = `http://127.0.0.1:${updates.address().port}`
   process.env.GAMESMITH_APP_VERSION = '0.8.0'
   process.env.GAMESMITH_UPDATE_DELAY_MS = '1500'
@@ -463,7 +473,7 @@ mock.listen(0, '127.0.0.1', async () => {
     check(await waitFor('.right > .chat .msg.ai:not(.live) .msg-text', 120000), 'modeling AI finished')
     const modelReq = requests.at(-1)
     check(modelReq.messages.find((m) => m.role === 'user')?.content === 'A wooden treasure chest with a gold lid', 'the description typed in New model was sent to the AI automatically')
-    check(modelReq.tools.map((t) => t.function.name).join(',') === 'read_script,write_script,edit_script,find_textures,build_model', 'modeling AI has the Blender tools')
+    check(modelReq.tools.map((t) => t.function.name).join(',') === 'read_script,write_script,edit_script,find_textures,find_parts,add_kit,build_model', 'modeling AI has the Blender tools')
     check(fs.existsSync(path.join(libDir, 'treasure-chest', 'model.glb')) && fs.existsSync(path.join(libDir, 'treasure-chest', 'preview.png')), 'Blender built model.glb and preview.png')
     check(await waitFor('.asset-detail .stats', 10000), 'measurements shown')
     const statsText = await js(`document.querySelector('.asset-detail .stats').innerText`)
@@ -539,6 +549,42 @@ mock.listen(0, '127.0.0.1', async () => {
     check(await js(`[...document.querySelectorAll('.clip-bar .clip')].some(c => c.textContent.includes('Wave'))`), 'its animation is listed in the 3D view')
     await sleep(2500)
     await shot('26d-character')
+
+    // Kits: the built-in catalog adds a pack with one click (here: models built above, served locally)
+    {
+      const { zipSync } = require('fflate')
+      const libDir2 = path.join(tmp, 'Gamesmith Library')
+      const chest = fs.readFileSync(path.join(libDir2, 'treasure-chest', 'model.glb'))
+      const knight = fs.readFileSync(path.join(libDir2, 'knight', 'model.glb'))
+      kitFiles['Chest.glb'] = chest
+      kitFiles['Knight Guard.glb'] = knight
+      const sha = (b) => require('node:crypto').createHash('sha1').update(`blob ${b.length}\0`).update(b).digest('hex')
+      fs.writeFileSync(kitCatalog, JSON.stringify({ base: 'https://example.invalid/', credit: 'Smoke test models.', packs: [
+        { id: 'smoke-props', name: 'Smoke Props', about: 'A chest and a knight', source: 'Quaternius', url: '', license: 'CC0', dir: 'smoke', files: [{ f: 'Chest.glb', sha: sha(chest) }, { f: 'Knight Guard.glb', sha: sha(knight) }] }
+      ] }))
+      await clickText('Kits')
+      await sleep(800)
+      check(await js(`document.body.innerText.includes('Free kits') && !!document.querySelector('.kit-card')`), 'Kits opens on the built-in catalog of free packs')
+      await shot('26e-kit-catalog')
+      await js(`[...document.querySelectorAll('.kit-card')].find(c => c.textContent.includes('Smoke Props'))?.querySelector('button.play')?.click()`)
+      let added = false
+      for (let i = 0; i < 60 && !added; i++) {
+        await sleep(500)
+        added = await js(`document.querySelectorAll('.kit-part img').length === 2`)
+      }
+      check(added, 'one click on Add downloads the pack, and its parts show with thumbnails')
+      check(await js(`[...document.querySelectorAll('.lib-item')].some(b => b.textContent.includes('Smoke Props'))`), 'the added kit is in the list')
+      await shot('26f-kits')
+      // a pack's .zip can still be dropped in
+      const packZip = path.join(tmp, 'kenney_smoke-kit.zip')
+      fs.writeFileSync(packZip, zipSync({ 'License.txt': new TextEncoder().encode('Kenney, Creative Commons Zero (CC0)'), 'Models/GLB format/chest.glb': chest }))
+      const imported = await js(`window.gs.kits.import([${JSON.stringify(packZip)}])`)
+      check(imported.length === 1 && imported[0].parts === 1 && imported[0].license === 'CC0', `a pack .zip can still be imported (${JSON.stringify(imported)})`)
+      await clickText('Models')
+      await sleep(500)
+      await js(`[...document.querySelectorAll('.lib-item')].find(b => b.textContent.includes('Cowboy'))?.click()`)
+      await sleep(800)
+    }
 
     // Delete a model, make a new one with the same name: it opens, with an empty chat
     await js(`window.confirm = () => true; 1`)

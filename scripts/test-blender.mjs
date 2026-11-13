@@ -312,6 +312,14 @@ with rig.clip("Wave", seconds=1.0):
     rig.pose("UpperArm.R", at=0.5, rotate=(0, -150, 0))
     rig.pose("UpperArm.R", at=1.0, rotate=(0, 0, 0))
 kid = character(build="kid", height=1.3, body="female", hair="ponytail", sleeves="short", legs="shorts", hat="cap", name="Kid")
+# a part resized and attached right away keeps its size (it used to snap back to a 1 m cube)
+bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.2, 1.0))
+plate = bpy.context.object
+plate.name = "ChestPlate"
+plate.scale = (0.34, 0.2, 0.2)
+rig.attach(plate, "Chest")
+bpy.context.view_layer.update()
+assert abs(plate.dimensions.x - 0.34) < 0.01 and abs(plate.matrix_world.to_scale().x - 0.34) < 0.01, plate.matrix_world.to_scale()
 kid.obj.location.x = 1.2
 `
   const ch = await library.create('Cowboy', '')

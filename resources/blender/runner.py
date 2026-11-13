@@ -527,7 +527,13 @@ class Rig:
         if bone is not None:
             if bone not in self._bones:
                 raise ValueError(f'rig.attach: no bone named "{bone}". Bones: {", ".join(self._bones)}')
-            world = obj.matrix_world.copy()
+            # matrix_world lags behind location/rotation/scale set just before this call until Blender
+            # updates the scene, which would drop that change (a scaled part snapping back to 1 m).
+            if obj.parent is None:
+                world = obj.matrix_basis.copy()
+            else:
+                bpy.context.view_layer.update()
+                world = obj.matrix_world.copy()
             obj.parent = self.obj
             obj.parent_type = "BONE"
             obj.parent_bone = bone

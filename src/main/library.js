@@ -107,6 +107,7 @@ export async function create(name, description = '') {
   let id = base
   for (let i = 2; fs.existsSync(join(root, id)); i++) id = `${base}-${i}`
   fs.mkdirSync(join(root, id))
+  fs.rmSync(chatFile(id), { force: true }) // never pick up a chat left by an older model with this name
   const now = new Date().toISOString()
   writeMeta(id, { id, name: name.trim() || 'Untitled asset', description, license: 'Own work', created: now, updated: now, stats: null, tags: [] })
   fs.writeFileSync(safe(id, 'model.py'), SAMPLE(name, description))
@@ -162,6 +163,7 @@ export async function rename(id, name) {
 export async function remove(id) {
   const meta = readMeta(id)
   fs.rmSync(safe(id), { recursive: true, force: true })
+  fs.rmSync(chatFile(id), { force: true }) // its AI chat goes too (a new model with the same name starts fresh)
   await localGit.commitAll(root, `Removed ${meta.name}`)
 }
 

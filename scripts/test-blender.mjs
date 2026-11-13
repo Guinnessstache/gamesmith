@@ -120,6 +120,15 @@ ok(f['model.glb']?.subarray(0, 4).toString() === 'glTF', 'model.glb is a binary 
 ok(f['preview.png']?.subarray(1, 4).toString() === 'PNG', 'preview.png rendered')
 ok(library.readMeta('treasure-chest').stats.triangles === stats.triangles, 'asset.json updated with measurements')
 ok(!fs.readdirSync(join(tmp, 'Gamesmith Library', 'treasure-chest')).some((n) => n.includes('.tmp.')), 'no temporary files left')
+{
+  // deleting a model deletes its chat: a new model with the same name starts fresh
+  const old = await library.create('Chat check', '')
+  library.saveChat(old.id, [{ role: 'user', content: 'old request' }])
+  await library.remove(old.id)
+  const again = await library.create('Chat check', '')
+  ok(again.id === old.id && library.loadChat(again.id).length === 0, 'a new model never inherits a deleted model\'s chat')
+  await library.remove(again.id)
+}
 
 ok(!requests.some((r) => JSON.stringify(r.messages).includes('image_url')) && !fs.existsSync(join(tmp, 'Gamesmith Library', 'treasure-chest', 'views.png')), 'a model that cannot see images gets no renders')
 

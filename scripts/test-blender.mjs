@@ -44,6 +44,9 @@ fs.writeFileSync(join(tmp, 'bad.py'), 'x = 1\nbpy.ops.mesh.primitive_cube_add(si
 const bad = await blender.run({ blender: exe, runner, script: join(tmp, 'bad.py'), outGlb: join(tmp, 'bad.glb'), outPng: '-' })
 ok(!bad.ok && /NameError/.test(bad.error) && /line 3/.test(bad.where), 'script error comes back with its line number')
 ok(!fs.existsSync(join(tmp, 'bad.glb')), 'no model written for a failed build')
+fs.writeFileSync(join(tmp, 'joints.py'), 'rig = Rig.humanoid(height=1.7)\nhx, hy, hz = rig.joints["Hips"]\n')
+const jb = await blender.run({ blender: exe, runner, script: join(tmp, 'joints.py'), outGlb: join(tmp, 'joints.glb'), outPng: '-' })
+ok(!jb.ok && /Hint: rig\.joints\["Bone"\] is a pair of points \(head, tail\)/.test(jb.error), 'unpacking rig.joints as x, y, z gets a hint with the fix')
 
 // ---- the library ----
 library.configure(join(tmp, 'Gamesmith Library'))

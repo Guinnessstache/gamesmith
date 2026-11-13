@@ -973,6 +973,24 @@ def render_views(path, bounds, px=320):
     bpy.data.objects.remove(cam)
 
 
+def _error_hint(e, tb, code):
+    """A plain hint for mistakes modeling AIs make over and over, with the fix."""
+    lines = re.findall(r'File "model.py", line (\d+)', tb)
+    src = ""
+    if lines and code:
+        n = int(lines[-1])
+        all_lines = code.splitlines()
+        if 0 < n <= len(all_lines):
+            src = all_lines[n - 1]
+    msg = str(e)
+    if isinstance(e, ValueError) and "unpack" in msg and "joints" in src:
+        return ('Hint: rig.joints["Bone"] is a pair of points (head, tail), not x, y, z. Write: '
+                'head, tail = rig.joints["Bone"]  then  x, y, z = head  (head is where the bone starts, tail where it ends).')
+    if isinstance(e, TypeError) and "joints" in src and "subscript" not in msg and "Vector" in msg:
+        return 'Hint: rig.joints["Bone"] is a pair (head, tail): use rig.joints["Bone"][0] for the start point.'
+    return ""
+
+
 def main():
     args = args_after_dashes()
     # Blender treats relative paths differently from the shell; make them absolute.
@@ -1032,6 +1050,9 @@ def main():
         # Point at the line in model.py, which is what the author needs.
         model_lines = [l for l in tb.splitlines() if 'File "model.py"' in l]
         result = {"ok": False, "error": f"{type(e).__name__}: {e}", "where": model_lines[-1].strip() if model_lines else None, "traceback": tb[-3000:]}
+        hint = _error_hint(e, tb, locals().get("code") or "")
+        if hint:
+            result["error"] += "\n" + hint
     print(RESULT_TAG + json.dumps(result), flush=True)
     sys.exit(0 if result["ok"] else 3)
 

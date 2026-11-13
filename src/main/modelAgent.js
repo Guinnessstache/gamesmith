@@ -150,7 +150,8 @@ recorded motions and clips play on it. Never build a person from boxes or rig.li
   build: hero, average, slim, strong, heavy, kid. body: male, female. hair: short, long, buzz, ponytail, bun, spiky, bald.
   beard: None, stubble, full, mustache. sleeves: long, short, none. legs: long, shorts. hat: cowboy, cap, beanie, top, None.
   Any color can also be a material, e.g. pants=texture("denim_fabric", tile=0.5). Give each character a name (it names the
-  materials). rig.parts has "body", "head", "hair", "hat"...; rig.joints gives bone positions.
+  materials). rig.parts has "body", "head", "hair", "hat"...; rig.joints["Bone"] is a pair of points (head, tail):
+  head, tail = rig.joints["Hips"]; x, y, z = head   (never x, y, z = rig.joints["Hips"]).
   Add gear as separate parts attached to bones: a holster on "Hips", a sword in "Hand.R", a backpack on "Chest":
   make it, smooth() it, put it where it belongs (use rig.joints for positions), then rig.attach(obj, "Hand.R").
   Every held or worn part MUST be attached with rig.attach, or it stays behind when the character moves.

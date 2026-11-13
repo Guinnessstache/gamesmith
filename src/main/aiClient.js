@@ -116,7 +116,7 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
   const url = joinUrl(ai.baseUrl, '/chat/completions')
   const body = {
     model: ai.model,
-    messages,
+    messages: messages.map(({ gsRender, ...m }) => m), // Gamesmith's own markers stay here
     temperature: ai.temperature ?? 0.2,
     // a cap on one reply (thinking included), so a model that loops can't run forever
     max_tokens: Number(ai.maxReplyTokens) || 32768,
@@ -406,4 +406,45 @@ export function splitThinking(content) {
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
     .trim()
   return { visible, reasoning }
+}
+
+// ---------- can the model see images? ----------
+const visionCache = new Map()
+// one red pixel
+const RED_PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='
+
+/**
+ * Whether the model accepts images (asks it the color of one red pixel; remembered per model).
+ * ai.vision: 'auto' (test), 'on' or 'off'.
+ */
+export async function supportsVision(ai, { signal } = {}) {
+  if (ai.vision === 'on') return true
+  if (ai.vision === 'off') return false
+  const key = `${ai.baseUrl}|${ai.model}`
+  if (visionCache.has(key)) return visionCache.get(key)
+  let yes = false
+  try {
+    const res = await fetch(joinUrl(ai.baseUrl, '/chat/completions'), {
+      method: 'POST',
+      headers: headers(ai),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
+      body: JSON.stringify({
+        model: ai.model,
+        max_tokens: 20,
+        temperature: 0,
+        stream: false,
+        ...(ai.thinking === 'off' ? THINKING.off : {}),
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'What color is this image? Answer with one word.' }, { type: 'image_url', image_url: { url: RED_PIXEL } }] }]
+      })
+    })
+    if (res.ok) {
+      const j = await res.json()
+      const m = j.choices?.[0]?.message || {}
+      yes = /\bred\b/i.test(`${m.content || ''}`)
+    }
+  } catch (e) {
+    if (signal?.aborted) throw e
+  }
+  visionCache.set(key, yes)
+  return yes
 }

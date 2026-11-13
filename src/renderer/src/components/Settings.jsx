@@ -161,6 +161,14 @@ export default function Settings({ settings, presets, onClose, onSaved }) {
               </select>
             </label>
             <label className="field">
+              <span>Let the AI see its renders</span>
+              <select value={ai.vision || 'auto'} onChange={(e) => update({ vision: e.target.value })}>
+                <option value="auto">If the model can see images (checked automatically)</option>
+                <option value="on">Always</option>
+                <option value="off">Never</option>
+              </select>
+            </label>
+            <label className="field">
               <span>Planning limit (tokens before it must answer, 0 = none)</span>
               <input type="number" min="0" step="1000" value={ai.maxThinkingTokens ?? 6000} onChange={(e) => update({ maxThinkingTokens: Number(e.target.value) })} />
             </label>

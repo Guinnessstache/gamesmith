@@ -75,7 +75,13 @@ const server = http.createServer((req, res) => {
   let body = ''
   req.on('data', (c) => (body += c))
   req.on('end', () => {
-    requests.push(JSON.parse(body))
+    const parsed = JSON.parse(body)
+    if (parsed.stream === false && JSON.stringify(parsed.messages).includes('image_url')) {
+      // "can you see images?" check: this mock model can't
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ choices: [{ message: { content: 'I cannot see images.' } }] }))
+    }
+    requests.push(parsed)
     const step = steps[turn++] || { text: 'Done.' }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)
@@ -114,6 +120,75 @@ ok(f['model.glb']?.subarray(0, 4).toString() === 'glTF', 'model.glb is a binary 
 ok(f['preview.png']?.subarray(1, 4).toString() === 'PNG', 'preview.png rendered')
 ok(library.readMeta('treasure-chest').stats.triangles === stats.triangles, 'asset.json updated with measurements')
 ok(!fs.readdirSync(join(tmp, 'Gamesmith Library', 'treasure-chest')).some((n) => n.includes('.tmp.')), 'no temporary files left')
+
+ok(!requests.some((r) => JSON.stringify(r.messages).includes('image_url')) && !fs.existsSync(join(tmp, 'Gamesmith Library', 'treasure-chest', 'views.png')), 'a model that cannot see images gets no renders')
+
+// A model that can see: it's shown four views after each build, and the reference images
+{
+  const seeSteps = [
+    { tool: { name: 'write_script', args: { content: 'bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.5))\nassign(bpy.context.object, mat("Red", (0.8, 0.1, 0.1)))\n' } } },
+    { tool: { name: 'build_model', args: {} } },
+    { tool: { name: 'edit_script', args: { old_text: 'size=1,', new_text: 'size=0.8,' } } },
+    { tool: { name: 'build_model', args: {} } },
+    { tool: { name: 'build_model', args: {} } },
+    { tool: { name: 'build_model', args: {} } },
+    { text: 'A red block.' }
+  ]
+  let n = 0
+  const seen = []
+  let probes = 0
+  const srv2 = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      const parsed = JSON.parse(body)
+      if (parsed.stream === false) {
+        probes++
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ choices: [{ message: { content: 'Red.' } }] }))
+      }
+      seen.push(parsed)
+      const step = seeSteps[n++] || { text: 'Done.' }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)
+      if (step.tool) {
+        chunk({ tool_calls: [{ index: 0, id: `c${n}`, type: 'function', function: { name: step.tool.name, arguments: JSON.stringify(step.tool.args) } }] })
+        chunk({}, 'tool_calls')
+      } else {
+        chunk({ content: step.text })
+        chunk({}, 'stop')
+      }
+      res.end('data: [DONE]\n\n')
+    })
+  })
+  await new Promise((r) => srv2.listen(0, '127.0.0.1', r))
+  const blk = await library.create('Red block', '')
+  // a reference picture (a tiny PNG is enough here)
+  const refPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64')
+  library.addReference(blk.id, refPng, 'image/png')
+  ok(library.listReferences(blk.id).length === 1 && fs.readFileSync(join(library.dir(), '.gitignore'), 'utf8').includes('*/references/'), 'reference image saved (kept out of the GitHub backup)')
+  const seeEvents = []
+  const sr = await runModelAgent({
+    id: blk.id,
+    ai: { baseUrl: `http://127.0.0.1:${srv2.address().port}/v1`, model: 'mock-vision', maxSteps: 12, autoFixRounds: 1 },
+    userText: 'A red block',
+    emit: (e) => seeEvents.push(e),
+    build: (opts) => library.build(blk.id, { blenderPath: exe, runner, commitMessage: false, ...opts })
+  })
+  srv2.close()
+  const images = (r) => r.messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((c) => c.type === 'image_url') : []))
+  ok(probes === 1 && sr.build?.ok, 'checked once whether the model can see')
+  ok(images(seen[0]).length === 1 && /Reference image/.test(JSON.stringify(seen[0].messages.at(-1))), 'the reference image goes with the request')
+  ok(/SEE your work/.test(seen[0].messages[0].content), 'the instructions tell it that it will see its renders')
+  const afterBuild = seen[2].messages.at(-1)
+  ok(Array.isArray(afterBuild.content) && afterBuild.content[1].image_url.url.startsWith('data:image/png;base64,') && /four|front/.test(afterBuild.content[0].text), 'after a build it is shown the four views')
+  ok(!seen.some((r) => r.messages.some((m) => 'gsRender' in m)), 'no Gamesmith-only fields are sent to the model server')
+  ok(images(seen[4]).length === 2 && /earlier render/.test(JSON.stringify(seen[4].messages)), 'only the newest render is kept (plus the reference)')
+  const looks = seeEvents.filter((e) => e.type === 'tool_end' && e.name === 'look_at_render').length
+  ok(looks === 3 && images(seen[6]).length === 2 && /last look/.test(JSON.stringify(seen[6].messages)), `at most 3 looks per request (${looks})`)
+  const png = fs.readFileSync(join(library.dir(), blk.id, 'views.png'))
+  ok(png.readUInt32BE(16) === 640 && png.readUInt32BE(20) === 640, 'the four views are one 640 x 640 picture')
+}
 
 // a broken edit later never replaces the last good model
 const goodGlb = f['model.glb']

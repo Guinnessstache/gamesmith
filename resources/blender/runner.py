@@ -823,12 +823,75 @@ def render_preview(path, bounds, px=384):
     bpy.ops.render.render(write_still=True)
 
 
+def render_views(path, bounds, px=320):
+    """Four views in one image, for the modeling AI to check its work: front, side, back and
+    three-quarter from above. Solid shading with each material's color: fast, and shapes read clearly."""
+    import numpy as np
+    lo, hi = Vector(bounds[0]), Vector(bounds[1])
+    center = (lo + hi) / 2
+    radius = max((hi - lo).length / 2, 0.05)
+    scene = bpy.context.scene
+    cam_data = bpy.data.cameras.new("GS_Views_Cam")
+    cam_data.lens = 50
+    cam = bpy.data.objects.new("GS_Views_Cam", cam_data)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    scene.render.engine = "BLENDER_WORKBENCH"
+    shading = scene.display.shading
+    shading.light = "STUDIO"
+    shading.color_type = "MATERIAL"
+    shading.show_cavity = True
+    shading.show_object_outline = True
+    shading.show_shadows = False
+    scene.display.render_aa = "8"
+    scene.render.resolution_x = px
+    scene.render.resolution_y = px
+    scene.render.film_transparent = False
+    scene.view_settings.view_transform = "Standard"
+    world = bpy.data.worlds.get("GS_Views_World") or bpy.data.worlds.new("GS_Views_World")
+    world.color = (0.32, 0.34, 0.38)
+    scene.world = world
+    scene.render.image_settings.file_format = "PNG"
+    # the model faces -Y: front view looks from -Y
+    views = [Vector((0, -1, 0.12)), Vector((1, 0, 0.12)), Vector((0, 1, 0.12)), Vector((-1.0, -1.25, 0.9))]
+    half = math.radians(cam_data.angle * 180 / math.pi / 2)
+    dist = radius / math.sin(half) * 1.05
+    tiles = []
+    tmp = path + ".view.png"
+    for d in views:
+        d = d.normalized()
+        cam.location = center + d * dist
+        cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
+        cam_data.clip_end = dist * 10
+        scene.render.filepath = tmp
+        bpy.ops.render.render(write_still=True)
+        img = bpy.data.images.load(tmp, check_existing=False)
+        a = np.array(img.pixels[:], dtype=np.float32).reshape(px, px, 4)
+        bpy.data.images.remove(img)
+        tiles.append(a)
+    os.remove(tmp)
+    top = np.concatenate([tiles[3], tiles[0]], axis=1)  # three-quarter, front
+    bottom = np.concatenate([tiles[2], tiles[1]], axis=1)  # back, right side
+    sheet = np.concatenate([bottom, top], axis=0)  # Blender's pixel rows start at the bottom
+    # thin dividing lines
+    sheet[px - 1:px + 1, :, :3] = 0.1
+    sheet[:, px - 1:px + 1, :3] = 0.1
+    out = bpy.data.images.new("GS_Views", width=px * 2, height=px * 2, alpha=True)
+    out.pixels.foreach_set(sheet.ravel())
+    out.filepath_raw = path
+    out.file_format = "PNG"
+    out.save()
+    bpy.data.images.remove(out)
+    bpy.data.objects.remove(cam)
+
+
 def main():
     args = args_after_dashes()
     # Blender treats relative paths differently from the shell; make them absolute.
     script, out_glb = os.path.abspath(args[0]), os.path.abspath(args[1])
     out_png = args[2] if args[2] == "-" else os.path.abspath(args[2])
     px = int(args[3]) if len(args) > 3 else 384
+    out_views = os.path.abspath(args[4]) if len(args) > 4 and args[4] != "-" else None
     result = {"ok": False}
     try:
         bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -867,6 +930,9 @@ def main():
             export_animations=bool(clips),
             export_animation_mode="ACTIONS",  # every clip becomes one named animation
         )
+        if out_views:
+            # before the preview: its lights and camera would otherwise appear in these views
+            render_views(out_views, stats["bounds"])
         if out_png != "-":
             render_preview(out_png, stats["bounds"], px)
         stats.pop("bounds", None)

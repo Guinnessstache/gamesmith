@@ -26,7 +26,8 @@ const DEFAULTS = {
     requestTimeoutSec: 600,
     maxReplyTokens: 32768,
     thinking: 'auto', // auto | short | off: how much a thinking model may plan
-    maxThinkingTokens: 6000 // planning allowed before it must start answering (0 = no limit)
+    maxThinkingTokens: 6000, // planning allowed before it must start answering (0 = no limit)
+    vision: 'auto' // auto | on | off: show the modeling AI its renders and reference images
   },
   projectsDir: '',
   externalProjects: [], // game folders opened from elsewhere on this computer

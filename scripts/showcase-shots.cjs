@@ -82,6 +82,12 @@ const mock = http.createServer((req, res) => {
   let body = ''
   req.on('data', (c) => (body += c))
   req.on('end', async () => {
+    const parsedBody = JSON.parse(body || '{}')
+    if (parsedBody.stream === false) {
+      // Gamesmith asking whether the model can see images: this mock can't
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ choices: [{ message: { content: 'I cannot see images.' } }] }))
+    }
     const step = script[turn++] || { text: 'Done.' }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)

@@ -2,11 +2,20 @@
 //
 // Same loop shape as the game agent (agent.js): native or text tool calls, then an
 // automatic build when the model says it's done, with build errors sent back for a fix.
-import { chat, extractTextToolCalls, splitThinking } from './aiClient.js'
+import { chat, extractTextToolCalls, splitThinking, supportsVision } from './aiClient.js'
+import fs from 'node:fs'
 import { applyEdit, parseArgs } from './agent.js'
 import * as library from './library.js'
 
 const HISTORY_TURNS = 10
+const MAX_REVIEWS = 3 // how many times the AI looks at a render in one request
+const VIEWS_LAYOUT = "top left: three-quarter view from the front and above; top right: front; bottom left: back; bottom right: side view (from the model's left)"
+
+const dataUrl = (file) => {
+  const ext = file.split('.').pop().toLowerCase()
+  const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png'
+  return `data:${type};base64,${fs.readFileSync(file).toString('base64')}`
+}
 
 function motionList() {
   let list = []
@@ -23,7 +32,7 @@ Available: ${list.map((m) => `"${m.name}" (${m.seconds} s${m.loop ? ', loops' : 
 Prefer a recorded motion when the user asks for that move; you can mix them with keyframed clips.`
 }
 
-function systemPrompt(meta, script) {
+function systemPrompt(meta, script, { vision = false, references = 0 } = {}) {
   return `You are a 3D modeling assistant inside Gamesmith. You build game-ready 3D models by writing a Blender ${'5.x'} Python script (bpy).
 The asset is "${meta.name}"${meta.description ? `: ${meta.description}` : ''}.
 
@@ -31,7 +40,10 @@ How it works:
 - The whole model is ONE script, model.py. Gamesmith runs it in an empty scene in Blender (background mode, no window), exports every mesh to model.glb, renders preview.png and measures the result.
 - Tools: read_script, write_script (replace it), edit_script (exact search and replace), build_model (run it in Blender; returns size, triangles and materials, or the error and line).
 - After you finish, Gamesmith builds the model and sends you any errors to fix.
-
+${vision ? `- You can SEE your work: after each build_model, Gamesmith shows you the model from four angles. Look at it carefully and
+  compare it with the request${references ? ' and the reference image' + (references > 1 ? 's' : '') : ''}. Fix what looks wrong and build again; when it looks right, finish
+  with a short summary. Judge the shape, proportions and colors, not the plain grey background or lighting.
+` : ''}
 Rules for game-ready models:
 - Units are meters, Z is up. The model stands on the ground: its lowest point at z = 0, centered on x = 0, y = 0. Front faces -Y.
 - Use real-world sizes (a door is about 2 m tall, a crate about 0.6 m, a person 1.75 m).
@@ -212,11 +224,24 @@ export function formatBuild(r) {
 export async function runModelAgent({ id, ai, build, findTextures, history = [], userText, emit = () => {}, signal }) {
   if (!ai.model) throw new Error('No model selected. Open Settings and pick a model.')
   const meta = library.readMeta(id)
-  const messages = [{ role: 'system', content: systemPrompt(meta, library.readScript(id)) }]
+  // Models that can see get the renders (and any reference images) to check their work against.
+  if (ai.vision !== 'off') emit({ type: 'status', text: 'Checking whether the model can see images…' })
+  const vision = await supportsVision(ai, { signal })
+  const refs = vision ? library.listReferences(id) : []
+  const messages = [{ role: 'system', content: systemPrompt(meta, library.readScript(id), { vision, references: refs.length }) }]
   for (const turn of history.slice(-HISTORY_TURNS)) {
     if (turn.role === 'user' || turn.role === 'assistant') messages.push({ role: turn.role, content: turn.content })
   }
-  messages.push({ role: 'user', content: userText })
+  if (refs.length) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: `${userText}\n\nReference image${refs.length > 1 ? 's' : ''} for this model (aim for this look, in a game-ready form):` },
+        ...refs.map((r) => ({ type: 'image_url', image_url: { url: dataUrl(r.path) } }))
+      ]
+    })
+  } else messages.push({ role: 'user', content: userText })
+  let reviews = 0
 
   let changed = false
   let builtSinceChange = false
@@ -227,7 +252,7 @@ export async function runModelAgent({ id, ai, build, findTextures, history = [],
 
   const doBuild = async () => {
     emit({ type: 'status', text: 'Building in Blender…' })
-    lastBuild = await build()
+    lastBuild = await build({ views: vision && reviews < MAX_REVIEWS })
     builtSinceChange = true
     emit({ type: 'build', result: lastBuild })
     return lastBuild
@@ -309,6 +334,37 @@ export async function runModelAgent({ id, ai, build, findTextures, history = [],
         else messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: String(result) })
       }
       if (textMode) messages.push({ role: 'user', content: textResults.join('\n\n') })
+      // Show the AI what it just built.
+      if (vision && lastBuild?.ok && lastBuild.views && toolCalls.some((c) => c.name === 'build_model') && reviews < MAX_REVIEWS) {
+        reviews++
+        const lookId = `look_${step}`
+        emit({ type: 'tool_start', id: lookId, name: 'look_at_render', args: {} })
+        for (const m of messages) {
+          // keep only the newest render (images are large); reference images stay
+          if (m.gsRender) {
+            m.content = '[An earlier render of the model was shown here.]'
+            delete m.gsRender
+          }
+        }
+        const last = reviews >= MAX_REVIEWS
+        messages.push({
+          role: 'user',
+          gsRender: true,
+          content: [
+            {
+              type: 'text',
+              text:
+                `This is what you just built (${VIEWS_LAYOUT}). Compare it with the request${refs.length ? ' and the reference image' + (refs.length > 1 ? 's' : '') : ''}. ` +
+                'Check: parts floating or not touching, parts sunk inside others, sizes and proportions, colors, missing pieces, which way it faces (the front looks toward -Y). ' +
+                (last
+                  ? 'This is the last look you get: fix anything clearly wrong, then finish with a short summary.'
+                  : 'If it looks right, finish with a short summary. Otherwise fix the script and build again.')
+            },
+            { type: 'image_url', image_url: { url: dataUrl(lastBuild.views) } }
+          ]
+        })
+        emit({ type: 'tool_end', id: lookId, name: 'look_at_render', ok: true, result: `Looked at the render (${reviews} of ${MAX_REVIEWS})` })
+      }
       continue
     }
 

@@ -36,7 +36,7 @@ assign(bpy.context.object, mat("Placeholder", (0.6, 0.6, 0.65)))
 `
 
 // Videos of you stay on this computer; only the tracked motion goes to GitHub.
-const GITIGNORE = '.gamesmith/\n*.tmp.glb\n*.tmp.png\nmotions/*/video.*\n'
+const GITIGNORE = '.gamesmith/\n*.tmp.glb\n*.tmp.png\nmotions/*/video.*\n*/views.png\n*/references/\n'
 
 export async function ensure() {
   fs.mkdirSync(root, { recursive: true })
@@ -52,7 +52,11 @@ export async function ensure() {
   // Libraries made before motions existed: add the video rule.
   const gi = join(root, '.gitignore')
   const cur = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : ''
-  if (!cur.includes('motions/*/video.*')) fs.writeFileSync(gi, cur + (cur.endsWith('\n') || !cur ? '' : '\n') + 'motions/*/video.*\n')
+  let rules = cur
+  for (const rule of ['motions/*/video.*', '*/views.png', '*/references/']) {
+    if (!rules.includes(rule)) rules += (rules.endsWith('\n') || !rules ? '' : '\n') + rule + '\n'
+  }
+  if (rules !== cur) fs.writeFileSync(gi, rules)
 }
 
 function safe(id, file = '') {
@@ -128,11 +132,14 @@ export function files(id) {
  * Run the asset's script in Blender. Output goes to temporary files first, so a
  * failed build never replaces the last good model.
  */
-export async function build(id, { blenderPath, runner, signal, commitMessage, texturesDir, beforeRun } = {}) {
+export async function build(id, { blenderPath, runner, signal, commitMessage, texturesDir, beforeRun, views } = {}) {
   const missing = beforeRun ? await beforeRun(readScript(id)) : []
   const tmpGlb = safe(id, 'model.tmp.glb')
   const tmpPng = safe(id, 'preview.tmp.png')
-  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot(), texturesDir })
+  const viewsPng = views ? safe(id, 'views.png') : null
+  if (viewsPng) fs.rmSync(viewsPng, { force: true })
+  const r = await blender.run({ blender: blenderPath, runner, script: safe(id, 'model.py'), outGlb: tmpGlb, outPng: tmpPng, signal, motionsDir: motionsRoot(), texturesDir, outViews: viewsPng })
+  if (r.ok && viewsPng && fs.existsSync(viewsPng)) r.views = viewsPng
   if (missing?.length && r.ok) r.stats.missingTextures = missing
   if (!r.ok) {
     for (const f of [tmpGlb, tmpPng]) fs.rmSync(f, { force: true })
@@ -352,4 +359,40 @@ export async function createPerson(person, faceBytes) {
   writeMeta(meta.id, { ...readMeta(meta.id), person: { from: person.from, height: person.body.height } })
   await localGit.commitAll(root, `New character from the recording "${person.from}"`)
   return readMeta(meta.id)
+}
+
+// ---------- reference images (for the modeling AI) ----------
+const refDir = (id) => safe(id, 'references')
+const REF_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+
+export function listReferences(id) {
+  const d = refDir(id)
+  if (!fs.existsSync(d)) return []
+  return fs
+    .readdirSync(d)
+    .filter((f) => /\.(png|jpe?g|webp)$/i.test(f))
+    .sort()
+    .map((f) => ({ name: f, path: join(d, f) }))
+}
+
+/** bytes: the image (the app shrinks it first), type: its MIME type. At most 4 per model. */
+export function addReference(id, bytes, type) {
+  const ext = REF_EXT[type]
+  if (!ext) throw new Error('Use a PNG, JPEG or WebP image.')
+  if (listReferences(id).length >= 4) throw new Error('A model can have up to 4 reference images. Remove one first.')
+  fs.mkdirSync(refDir(id), { recursive: true })
+  const name = `ref-${Date.now()}.${ext}`
+  fs.writeFileSync(join(refDir(id), name), Buffer.from(bytes))
+  return listReferences(id)
+}
+
+export function removeReference(id, name) {
+  if (!/^[\w.-]+$/.test(name)) throw new Error('Bad name')
+  fs.rmSync(join(refDir(id), name), { force: true })
+  return listReferences(id)
+}
+
+export function referenceData(id, name) {
+  const f = join(refDir(id), name)
+  return fs.existsSync(f) ? fs.readFileSync(f) : null
 }

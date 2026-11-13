@@ -539,8 +539,9 @@ handle('blender:pickPath', async () => {
 })
 
 let buildAbort = null
-async function buildAsset(id, commitMessage) {
+async function buildAsset(id, commitMessage, { views } = {}) {
   const r = await library.build(id, {
+    views,
     blenderPath: requireBlender(),
     runner: runnerPy(),
     signal: modelAbort?.signal || buildAbort?.signal,
@@ -631,7 +632,7 @@ handle('model:run', async (id, userText) => {
       userText,
       emit,
       signal: modelAbort.signal,
-      build: () => buildAsset(id, false),
+      build: (opts) => buildAsset(id, false, opts),
       findTextures: (q) => assets.search(q, 'textures', 8)
     })
     const oid = await localCommit(`AI: ${userText.replace(/\s+/g, ' ').slice(0, 72)}`).catch(() => null)
@@ -688,6 +689,10 @@ handle('motions:remove', async (id) => {
   await library.removeMotion(id)
   send('library:changed', {})
 })
+handle('library:references', (id) => library.listReferences(id).map((r) => r.name))
+handle('library:addReference', (id, bytes, type) => library.addReference(id, bytes, type).map((r) => r.name))
+handle('library:removeReference', (id, name) => library.removeReference(id, name).map((r) => r.name))
+handle('library:referenceData', (id, name) => library.referenceData(id, name))
 handle('library:createPerson', async (person, faceBytes) => {
   const meta = await library.createPerson(person, faceBytes)
   send('library:changed', { id: meta.id })

@@ -110,6 +110,10 @@ contextBridge.exposeInMainWorld('gs', {
     addToGame: (id) => call('library:addToGame', id),
     connectGitHub: (opts) => call('library:connectGitHub', opts),
     createPerson: (person, face) => call('library:createPerson', person, face),
+    references: (id) => call('library:references', id),
+    addReference: (id, bytes, type) => call('library:addReference', id, bytes, type),
+    removeReference: (id, name) => call('library:removeReference', id, name),
+    referenceData: (id, name) => call('library:referenceData', id, name),
     sync: () => call('library:sync'),
     onChanged: (fn) => on('library:changed', fn)
   },

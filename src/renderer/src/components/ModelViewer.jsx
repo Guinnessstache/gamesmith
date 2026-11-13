@@ -90,6 +90,7 @@ export default function ModelViewer({ glb, fallback, wireframe = false, clip = n
   useEffect(() => {
     const c = ctx.current
     if (!c) return
+    window.__gsViewerScene = c.scene
     if (c.model) {
       c.scene.remove(c.model)
       c.model.traverse((o) => {
@@ -102,6 +103,10 @@ export default function ModelViewer({ glb, fallback, wireframe = false, clip = n
       c.clips = []
     }
     setLoadErr('')
+    // Loading takes a moment. If a newer build arrives meanwhile, this one is dropped when it finishes,
+    // or old builds would pile up in the scene.
+    c.loadToken = (c.loadToken || 0) + 1
+    const token = c.loadToken
     if (!glb) return
     const bytes = glb instanceof Uint8Array ? glb : new Uint8Array(glb)
     const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
@@ -109,8 +114,15 @@ export default function ModelViewer({ glb, fallback, wireframe = false, clip = n
       buf,
       '',
       (gltf) => {
-        if (!ctx.current) return
+        if (!ctx.current || ctx.current.loadToken !== token) {
+          gltf.scene.traverse((o) => {
+            o.geometry?.dispose()
+            ;[].concat(o.material || []).forEach((m) => m.dispose())
+          })
+          return
+        }
         const model = gltf.scene
+        model.userData.gsModel = true // (tests count these: there must only ever be one)
         ctx.current.scene.add(model)
         ctx.current.model = model
         ctx.current.clips = gltf.animations
@@ -132,7 +144,9 @@ export default function ModelViewer({ glb, fallback, wireframe = false, clip = n
         c.camera.far = dist * 100
         c.camera.updateProjectionMatrix()
       },
-      (e) => setLoadErr(e?.message || String(e))
+      (e) => {
+        if (ctx.current?.loadToken === token) setLoadErr(e?.message || String(e))
+      }
     )
   }, [glb])
 

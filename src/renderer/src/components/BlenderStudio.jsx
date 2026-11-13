@@ -24,7 +24,9 @@ export function useModelStudio() {
     try {
       setAsset(await window.gs.library.get(id))
     } catch {
+      // gone (deleted): clear the selection too, so a new model with the same name loads when picked
       setAsset(null)
+      setAssetId((cur) => (cur === id ? null : cur))
     }
   }, [])
 
@@ -51,7 +53,16 @@ export function useModelStudio() {
     await Promise.all([refreshList(), refreshAsset(assetId)])
   }, [refreshList, refreshAsset, assetId])
 
-  return { blender, setBlender, list, assetId, select: setAssetId, asset, refresh, refreshList, pendingPrompt, setPendingPrompt, section, setSection }
+  // Picking a model always (re)loads it, even if it has the same id as the one shown before.
+  const select = useCallback(
+    (id) => {
+      setAssetId(id)
+      refreshAsset(id)
+    },
+    [refreshAsset]
+  )
+
+  return { blender, setBlender, list, assetId, select, asset, refresh, refreshList, pendingPrompt, setPendingPrompt, section, setSection }
 }
 
 export default function BlenderStudio({ studio, project }) {

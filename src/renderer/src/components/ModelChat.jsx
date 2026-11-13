@@ -136,7 +136,7 @@ export default function ModelChat({ asset, settings, onOpenSettings, onRunFinish
       gone = true
       setLive((cur) => (cur?.attached ? null : cur))
     }
-  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, asset?.meta?.created]) // a new model can reuse a deleted one's id: reset for it too // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(
     () =>

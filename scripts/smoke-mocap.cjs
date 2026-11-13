@@ -197,6 +197,15 @@ mock.listen(0, '127.0.0.1', async () => {
     const textured = await js(`(() => { const c = document.querySelector('.asset-stage canvas'); return c ? c.toDataURL().length : 0 })()`)
     check(textured > 0, 'the 3D view rendered')
     await shot('m7-me')
+
+    // rebuilding a few times, with updates arriving close together, leaves exactly one model in the 3D view
+    for (let i = 0; i < 3; i++) {
+      await js(`Promise.all([window.gs.library.build(${JSON.stringify(me.id)}), window.gs.library.build(${JSON.stringify(me.id)})]).then(() => 1)`).catch(() => {})
+      await sleep(300)
+    }
+    await sleep(4000)
+    const models = await js(`(window.__gsViewerScene?.children || []).filter((o) => o.userData.gsModel).length`)
+    check(models === 1, `one model in the 3D view after rebuilds (${models})`)
   } catch (e) {
     console.error('MOCAP SMOKE ERROR', e)
     failures++

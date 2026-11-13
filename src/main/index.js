@@ -571,7 +571,11 @@ handle('library:list', () =>
     return { ...a, preview: p ? `data:image/png;base64,${p.toString('base64')}` : null }
   })
 )
-handle('library:create', async (name, description) => (await library.create(name, description)).id)
+handle('library:create', async (name, description) => {
+  const { id } = await library.create(name, description)
+  send('library:changed', { id }) // every open library view lists it
+  return id
+})
 handle('library:get', (id) => assetView(id))
 handle('library:saveScript', async (id, code) => {
   library.writeScript(id, code)

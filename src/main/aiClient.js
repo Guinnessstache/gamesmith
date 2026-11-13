@@ -50,6 +50,16 @@ const THINKING = {
 }
 const noExtras = new Set() // servers that rejected the extra fields
 
+// Some models ignore every "thinking off" switch (GLM on llama.cpp, for one). They do skip planning
+// when their reply is started for them with an empty think block, so Gamesmith learns per model:
+// if a reply asked not to think plans anyway, it is stopped early and asked again that way.
+const PREFILL = '<think></think>'
+const offMethod = new Map() // "baseUrl|model" -> 'prefill' | 'none' (prefill rejected by the server)
+const OFF_GRACE_TOKENS = 300 // planning tolerated from a model asked not to think, before switching
+const offKey = (ai) => `${ai.baseUrl}|${ai.model}`
+/** How Gamesmith turns thinking off for this model (for tests and diagnostics). */
+export const thinkingOffMethod = (ai) => offMethod.get(offKey(ai)) || 'switch'
+
 const NUDGE =
   "You have planned enough. Stop planning and act now: make the tool call (write the script, or make the change) with a simple version that works. You can improve it after it's built."
 
@@ -77,7 +87,9 @@ export async function chat(ai, opts) {
       if (used2) return used2
       throw new Error(
         `The model planned for ${e.tokens.toLocaleString()} tokens, was asked to stop, and planned for another ${e2.tokens.toLocaleString()} without writing anything. ` +
-          'Set "Model thinking" to Off in Settings → Advanced, or use a model without thinking for Blender models.'
+          (ai.thinking === 'off'
+            ? 'It ignores every way Gamesmith can ask it not to think. Turn thinking off on the model server (llama.cpp: start it with --reasoning-budget 0), or use a different model for Blender models.'
+            : 'Set "Model thinking" to Off in Settings → Advanced, or use a model without thinking for Blender models.')
       )
     }
   }
@@ -112,11 +124,23 @@ function useDraft(e, opts) {
   }
 }
 
-async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, thinking = 'auto', budgetTokens }) {
+async function chatOnce(ai, opts) {
+  try {
+    return await chatRequest(ai, opts)
+  } catch (e) {
+    if (e.code !== 'IGNORES_OFF') throw e
+    offMethod.set(offKey(ai), 'prefill')
+    opts.onDelta?.({ reasoning: "\n\n[Gamesmith: this model ignores the usual 'don't think' setting. Asking again in a way it follows.]\n\n" })
+    return chatRequest(ai, opts)
+  }
+}
+
+async function chatRequest(ai, { messages, tools, signal, onDelta = () => {}, thinking = 'auto', budgetTokens }) {
   const url = joinUrl(ai.baseUrl, '/chat/completions')
+  const prefill = thinking === 'off' && offMethod.get(offKey(ai)) === 'prefill'
   const body = {
     model: ai.model,
-    messages: messages.map(({ gsRender, ...m }) => m), // Gamesmith's own markers stay here
+    messages: [...messages.map(({ gsRender, ...m }) => m), ...(prefill ? [{ role: 'assistant', content: PREFILL }] : [])], // Gamesmith's own markers stay here
     temperature: ai.temperature ?? 0.2,
     // a cap on one reply (thinking included), so a model that loops can't run forever
     max_tokens: Number(ai.maxReplyTokens) || 32768,
@@ -126,8 +150,22 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
     body.tools = tools
     body.tool_choice = 'auto'
   }
-  const extras = THINKING[thinking]
+  const extras = prefill ? null : THINKING[thinking]
   if (extras && !noExtras.has(ai.baseUrl)) Object.assign(body, extras)
+  // watch whether a model asked not to think plans anyway (once per model; not when the server can't take the switch)
+  const watchOff = thinking === 'off' && !prefill && !offMethod.has(offKey(ai)) && !noExtras.has(ai.baseUrl)
+  let ignoredOff = false
+  // with the prefill, servers echo the empty think block at the start of the reply: drop it
+  let strip = prefill
+  let head = ''
+  const takeContent = (c) => {
+    if (!strip || !c) return c
+    head += c
+    const h = head.trimStart()
+    if (h.length < PREFILL.length && PREFILL.startsWith(h)) return ''
+    strip = false
+    return h.startsWith(PREFILL) ? h.slice(PREFILL.length).replace(/^\s+/, '') : head
+  }
   // planning allowed before the model must start answering (0 = no limit)
   const budget = budgetTokens ?? (Number.isFinite(Number(ai.maxThinkingTokens)) ? Number(ai.maxThinkingTokens) : 6000)
 
@@ -166,6 +204,7 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
   let streaming = false
   const timeoutError = () => {
     const secs = Math.round((Date.now() - started) / 1000)
+    if (ignoredOff) return Object.assign(new Error('The model plans even when asked not to.'), { code: 'IGNORES_OFF' })
     if (overBudget) return Object.assign(new Error(`Planned for ${overBudget} tokens without answering.`), { code: 'THINKING_BUDGET', tokens: overBudget, budget, draft })
     if (looping) {
       return new Error(
@@ -207,9 +246,13 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
   arm()
   if (!res.ok) {
     done()
+    if (prefill && (res.status === 400 || res.status === 422)) {
+      offMethod.set(offKey(ai), 'none') // this server won't take a started reply: back to the usual switch
+      return chatRequest(ai, { messages, tools, signal, onDelta, thinking, budgetTokens })
+    }
     if (extras && !noExtras.has(ai.baseUrl) && (res.status === 400 || res.status === 422)) {
       noExtras.add(ai.baseUrl) // this server doesn't take the thinking settings: ask again without them
-      return chatOnce(ai, { messages, tools, signal, onDelta, thinking: 'auto', budgetTokens })
+      return chatRequest(ai, { messages, tools, signal, onDelta, thinking: 'auto', budgetTokens })
     }
     const text = await res.text().catch(() => '')
     throw new Error(`Model server error ${res.status}: ${text.slice(0, 600)}`)
@@ -219,18 +262,23 @@ async function chatOnce(ai, { messages, tools, signal, onDelta = () => {}, think
   const calls = new Map()
 
   const applyChoice = (choice) => {
-    const d = choice.delta || choice.message || {}
+    const d0 = choice.delta || choice.message || {}
+    const d = d0.content ? { ...d0, content: takeContent(d0.content) } : d0
     const piece = (d.reasoning_content || d.reasoning || '') + (d.content || '')
     if (piece || d.tool_calls?.length) arm()
     if (d.tool_calls?.length) received.acting = true
-    if (budget > 0 && streaming && !received.acting) {
+    if ((budget > 0 || watchOff) && streaming && !received.acting) {
       // planning so far: the reasoning, plus any <think> section the server leaves in the text
       const visible = out.content + (d.content || '')
       const open = visible.trimStart().startsWith('<think>') && !visible.includes('</think>')
       const planned = out.reasoning.length + (d.reasoning_content || d.reasoning || '').length + (open ? visible.length : 0)
       const answering = !open && visible.replace(/<think>[\s\S]*?<\/think>/g, '').trim().length > 0
       if (answering) received.acting = true
-      else if (planned / 4 > budget) {
+      else if (watchOff && planned / 4 > (budget > 0 ? Math.min(OFF_GRACE_TOKENS, budget) : OFF_GRACE_TOKENS)) {
+        ignoredOff = true
+        quiet.abort()
+        throw Object.assign(new Error('ignores off'), { name: 'AbortError' })
+      } else if (budget > 0 && planned / 4 > budget) {
         // Many thinking models draft the answer inside their thinking ("Final script: ```python ...").
         // Let a draft that's being written finish, then stop and hand it over.
         const thoughts = out.reasoning + (d.reasoning_content || d.reasoning || '') + (open ? visible : '')

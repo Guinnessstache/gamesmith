@@ -1,6 +1,6 @@
 // The AI timeout counts silence, not total time: a slow model that keeps writing is fine.
 import http from 'node:http'
-import { chat, findLoop, draftFrom } from '../src/main/aiClient.js'
+import { chat, findLoop, draftFrom, thinkingOffMethod } from '../src/main/aiClient.js'
 
 let failed = 0
 const seen = []
@@ -22,6 +22,30 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ error: { message: 'unknown field chat_template_kwargs' } }))
   }
   const nudged = (body.messages || []).some((m) => /planned enough/.test(m.content || ''))
+  const prefilled = body.messages?.at(-1)?.role === 'assistant' && body.messages.at(-1).content === '<think></think>'
+  if (mode === 'reject' && prefilled) {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    return res.end(JSON.stringify({ error: { message: 'Assistant response prefill is not supported' } }))
+  }
+  if (mode === 'glm' || mode === 'glmtext' || mode === 'reject') {
+    // like GLM on llama.cpp: ignores every "don't think" switch, but skips planning when its reply is started with an empty think block
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+    const say = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: finish }] })}\n\n`)
+    if (!prefilled) {
+      const n = mode === 'reject' ? 60 : 3000
+      for (let k = 0; k < n && !res.destroyed; k++) {
+        say({ reasoning_content: `Thought ${k}: the user wants something, let me consider option ${k * 7}. ` })
+        if (k % 20 === 0) await sleep(1)
+      }
+      if (mode === 'reject') say({ content: 'Answer after planning.' }, 'stop')
+      return res.end('data: [DONE]\n\n')
+    }
+    say({ content: '<thi' })
+    say({ content: 'nk></think>' })
+    if (mode === 'glmtext') say({ content: 'Hi there!' }, 'stop')
+    else say({ tool_calls: [{ index: 0, id: 'g1', function: { name: 'write_script', arguments: '{"content":"x"}' } }] }, 'tool_calls')
+    return res.end('data: [DONE]\n\n')
+  }
   if ((mode === 'planner' || mode === 'stubborn') && !(mode === 'planner' && nudged)) {
     // a thinking model that plans and plans (never the same sentence twice)
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -142,6 +166,25 @@ const strictReqs = seen.filter((r) => r.mode === 'strict')
 ok(!(strict instanceof Error) && strictReqs.length === 2 && !strictReqs[1].body.chat_template_kwargs, 'a server that rejects the thinking settings is asked again without them')
 const unlimited = await chat({ ...base('slow'), maxThinkingTokens: 0 }, { messages }).catch((e) => e)
 ok(!(unlimited instanceof Error) && !seen.filter((r) => r.mode === 'slow').at(-1).body.chat_template_kwargs, 'by default (Let the model decide) no thinking settings are sent')
+
+// a model that ignores every "don't think" switch (GLM on llama.cpp)
+const glmNotes = []
+const glm = await chat({ ...base('glm'), requestTimeoutSec: 60, thinking: 'off' }, { messages, onDelta: (d) => d.reasoning && /Gamesmith:/.test(d.reasoning) && glmNotes.push(d.reasoning) }).catch((e) => e)
+const glmReqs = seen.filter((r) => r.mode === 'glm')
+ok(!(glm instanceof Error) && glm.toolCalls[0]?.name === 'write_script' && glm.content === '' && glmReqs.length === 2 && glmNotes.length === 1,
+  `thinking Off, but the model plans anyway: stopped after a few hundred tokens and asked again with its reply started, then it acts (${glm.message || glmReqs.length + ' requests'})`)
+ok(glmReqs[0].body.chat_template_kwargs?.enable_thinking === false && glmReqs[1].body.messages.at(-1).content === '<think></think>' && !glmReqs[1].body.chat_template_kwargs && thinkingOffMethod(base('glm')) === 'prefill',
+  'the second request starts the reply with an empty think block (and Gamesmith remembers that for this model)')
+const glm2 = await chat({ ...base('glm'), requestTimeoutSec: 60, thinking: 'off' }, { messages }).catch((e) => e)
+ok(!(glm2 instanceof Error) && seen.filter((r) => r.mode === 'glm').length === 3, 'next time it goes straight to what works: one request')
+const glmText = await chat({ ...base('glmtext'), requestTimeoutSec: 60, thinking: 'off' }, { messages }).catch((e) => e)
+ok(glmText.content === 'Hi there!' && !glmText.reasoning, `the empty think block the server echoes back is left out of the answer ("${glmText.content}")`)
+const glmPlan = await chat({ ...base('glm'), model: 'other', requestTimeoutSec: 60, maxThinkingTokens: 2000 }, { messages }).catch((e) => e)
+ok(!(glmPlan instanceof Error) && glmPlan.toolCalls[0]?.name === 'write_script', `with thinking left to the model, too much planning gets the same fix when it's asked to stop (${glmPlan.message || 'acts'})`)
+const rejected = await chat({ ...base('reject'), requestTimeoutSec: 60, thinking: 'off' }, { messages }).catch((e) => e)
+ok(rejected.content === 'Answer after planning.' && thinkingOffMethod(base('reject')) === 'none', 'a server that refuses a started reply goes back to the usual switch')
+const allOff = await chat({ ...base('stubborn'), requestTimeoutSec: 60, maxThinkingTokens: 2000, thinking: 'off' }, { messages }).catch((e) => e)
+ok(allOff instanceof Error && /--reasoning-budget 0/.test(allOff.message), `a model that ignores everything gets server advice: "${allOff.message?.slice(0, 120)}…"`)
 
 const stop = new AbortController()
 setTimeout(() => stop.abort(), 200)

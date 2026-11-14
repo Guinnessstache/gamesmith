@@ -1,6 +1,6 @@
 {
   "name": "gamesmith",
-  "version": "0.14.3",
+  "version": "0.15.0",
   "description": "Build browser games by describing them, with a local AI, GitHub saving, one-click hosting and Blender-made 3D models.",
   "main": "out/main/index.js",
   "scripts": {
@@ -17,6 +17,7 @@
     "test": "node scripts/test-agent.mjs && node scripts/test-assets.mjs && node scripts/test-github.mjs && node scripts/test-secrets.mjs && node scripts/test-import.mjs && node scripts/test-mocap.mjs && node scripts/test-furnace.mjs && node scripts/test-blueprint.mjs",
     "test:secrets": "node scripts/test-secrets.mjs",
     "test:blender": "node scripts/test-blender.mjs",
+    "test:humans": "node scripts/test-humans.mjs",
     "test:import": "node scripts/test-import.mjs",
     "test:mocap": "node scripts/test-mocap.mjs",
     "test:furnace": "node scripts/test-furnace.mjs",

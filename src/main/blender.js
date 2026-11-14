@@ -174,13 +174,20 @@ export function run({ blender, runner, script, outGlb, outPng = '-', size = 384,
   return runPython({ blender, py: runner, args, env, timeoutMs, signal })
 }
 
+let extensionsDir = null
+/** Gamesmith's own folder of Blender add-ons (the realistic people pack), so nothing goes into the user's Blender. */
+export function setExtensionsDir(dir) {
+  extensionsDir = dir
+}
+
 /**
  * Run a Gamesmith Python script in background Blender. It prints GAMESMITH_RESULT <json> (and may print
  * GAMESMITH_PROGRESS <done> <total>, passed to onProgress).
  */
 export function runPython({ blender, py, args = [], env = {}, timeoutMs = 180000, signal, onProgress }) {
   return new Promise((resolve) => {
-    const child = spawn(blender, ['-b', '--factory-startup', '--python-exit-code', '3', '--python', py, '--', ...args], { windowsHide: true, env: { ...process.env, ...env } })
+    const ext = extensionsDir ? { BLENDER_USER_EXTENSIONS: extensionsDir } : {}
+    const child = spawn(blender, ['-b', '--factory-startup', '--python-exit-code', '3', '--python', py, '--', ...args], { windowsHide: true, env: { ...process.env, ...ext, ...env } })
     let out = ''
     let partial = ''
     const take = (d) => {

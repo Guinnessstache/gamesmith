@@ -16,6 +16,7 @@ import { GameServer } from './gameServer.js'
 import * as blender from './blender.js'
 import * as library from './library.js'
 import * as kits from './kits.js'
+import * as humans from './humans.js'
 import { runModelAgent } from './modelAgent.js'
 import * as mocap from './mocap.js'
 import { Updater } from './updater.js'
@@ -550,6 +551,17 @@ async function buildAsset(id, commitMessage, { views } = {}) {
     texturesDir: assets.texturesDir(),
     kitsDir: kits.kitsDir(),
     beforeRun: async (script) => {
+      // human() needs the realistic people pack: fetch it the first time. If that fails, the build
+      // still runs and its error tells the AI (and the user) to fall back to character().
+      if (humans.usedBy(script) && !humans.status().installed) {
+        const say = (text) => {
+          if (modelRun?.assetId === id) modelRun.status = text
+          send('model:event', { type: 'status', text, assetId: id })
+        }
+        await humans
+          .ensure({ fetchFn: net.fetch, signal: modelAbort?.signal || buildAbort?.signal, onProgress: (ev) => say(humans.progressText(ev)) })
+          .catch((e) => console.warn('realistic people pack:', e.message))
+      }
       return assets.ensureTextures(assets.texturesInScript(script))
     }
   })
@@ -812,6 +824,8 @@ app.whenReady().then(async () => {
   library.configure(getSettings().libraryDir)
   kits.configure(() => library.dir() && join(library.dir(), 'kits'))
   kits.setRunnerPath(runnerPy())
+  humans.configure(process.env.GAMESMITH_HUMANS_DIR || join(app.getPath('userData'), 'humans'))
+  blender.setExtensionsDir(humans.extensionsDir())
   kits.setCatalogPath(process.env.GAMESMITH_KIT_CATALOG || join(resourcesDir, 'kits', 'catalog.json'))
   // Tests run Electron on a script, which reports its own version; give it ours.
   if (process.env.GAMESMITH_APP_VERSION && typeof app.setVersion === 'function') app.setVersion(process.env.GAMESMITH_APP_VERSION)

@@ -139,8 +139,27 @@ Rules:
 - Times are in seconds; keep loops short (0.6 to 1.2 s for walk cycles). Use clear names games can use: Idle, Walk, Run, Jump, Attack, Die, Open, Close, Spin.
 - After build_model, check the clip list in the result.
 
-PEOPLE: USE character()
-For any person (cowboy, soldier, villager, kid, hero...), call character(). It makes a smooth, stylized game
+REALISTIC PEOPLE: USE human()
+For a realistic person, call human(). It makes a real human body (anatomy, face, hands) with skin, eyes, hair
+and textured clothes, on the standard skeleton, so recorded motions, clips and rig.attach all work.
+Use human() unless the user asks for a cartoon, stylized or low-poly look. Never build a person from boxes.
+  rig = human(body="male", age="adult", build="average", ethnicity="caucasian", height=None, hair=None, hair_color=None,
+              eyes="brown", outfit="casual", shoes=None, hat=None, name="Human")
+  body: male, female. age: child, teen, young, adult, middleage, old. build: average, slim, athletic, strong, heavy.
+  ethnicity: african, asian, caucasian. height: meters, or None for a natural height.
+  hair: short01, short02, short03, short04, bob01, bob02, long01, ponytail01, braid01, afro01, "bald" (None: a usual style).
+  hair_color: (r, g, b), or None for the style's own color. eyes: blue, bluegreen, brown, brownlight, deepblue, green, grey, ice, lightblue.
+  outfit: casual, tshirt_jeans, suit, work (male overalls), sport (female), or a clothes name: male_casualsuit01..06,
+  male_elegantsuit01, male_worksuit01, female_casualsuit01..02, female_elegantsuit01, female_sportsuit01.
+  shoes: shoes01..shoes06 (None: the usual pair). hat: fedora01, fedora_cocked, None.
+  The clothes are modern. For a costume (armor, cape, cowboy hat, tool belt), make those pieces yourself and attach them
+  over the nearest outfit with rig.attach, as described below for gear. Clothes can't be recolored.
+  It stands on z = 0 facing -Y with arms down; rig.parts has "body", "eyes", "hair", "outfit", "shoes", "hat".
+  Extra bones you can pose: Spine2, Shoulder.L/.R, Toe.L/.R, and fingers Thumb1..3, Index1..3, Middle1..3, Ring1..3, Pinky1..3 (.L/.R).
+  One human is 30,000 to 40,000 triangles and takes 10 to 20 seconds to build. The first one downloads the people pack (a few minutes).
+
+STYLIZED PEOPLE: USE character()
+For a cartoon or stylized person, call character(). It makes a smooth, stylized game
 character (rounded body, face with eyes and brows, hair, clothes, optional hat) on the standard skeleton, so
 recorded motions and clips play on it. Never build a person from boxes or rig.limb.
   rig = character(height=1.8, build="hero", body="male", skin=(0.94, 0.72, 0.58), hair="short", hair_color=(0.28, 0.17, 0.09),

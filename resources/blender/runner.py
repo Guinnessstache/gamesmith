@@ -474,7 +474,11 @@ class Rig:
                 world = _humanoid_world_rotations(frame["w"], rest_dirs, previous, i)
                 at = round(i / fps * FPS)
                 for bone, w in world.items():
+                    # Skeletons from human() have extra bones in between (a second spine bone, shoulders):
+                    # those stay at rest, so they turn with the nearest bone above them that has a pose.
                     parent = self.data.bones[bone].parent
+                    while parent is not None and parent.name not in world:
+                        parent = parent.parent
                     rel = (world[parent.name].inverted() @ w) if parent else w
                     q = rests[bone].inverted() @ rel @ rests[bone]
                     pb = self.obj.pose.bones[bone]
@@ -818,6 +822,13 @@ from types import SimpleNamespace  # noqa: E402
 _character.R = SimpleNamespace(mat=mat, assign=assign, Rig=Rig, box_uv=box_uv)
 HELPERS["character"] = _character.character
 
+# Realistic people live in human.py: MakeHuman bodies, skin, hair and clothes (downloaded by Gamesmith).
+import human as _human  # noqa: E402
+
+STATE = {"alpha": False}  # set when a model has cut-out textures (hair), which JPEG can't store
+_human.R = SimpleNamespace(Rig=Rig, mat=mat, state=STATE)
+HELPERS["human"] = _human.human
+
 # ---------- measuring ----------
 def mesh_objects():
     return [o for o in bpy.context.scene.objects if o.type == "MESH"]
@@ -1025,7 +1036,7 @@ def main():
         for o in objs + [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]:
             o.select_set(True)
         textured = any(img.source == "FILE" for img in bpy.data.images)
-        image_opts = {"export_image_format": "JPEG", "export_image_quality": 85} if textured else {}
+        image_opts = {"export_image_format": "WEBP" if STATE["alpha"] else "JPEG", "export_image_quality": 85} if textured else {}
         bpy.ops.export_scene.gltf(
             **image_opts,
             filepath=out_glb,
